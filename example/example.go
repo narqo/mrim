@@ -2,7 +2,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -15,7 +16,10 @@ const (
 	versionTxt = "go mrim client 1.0"
 )
 
-const mraBufLen = 65536
+var (
+	username = "v.varankin@corp.mail.ru"
+	password = ""
+)
 
 func main() {
 	addr, err := net.ResolveTCPAddr("tcp", hostPort)
@@ -61,27 +65,91 @@ func main() {
 
 	// sequence
 	var seq uint32
+	var b bytes.Buffer
 
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-
-	seq += 1
-	h := mrim.NewHeader(seq, mrim.MrimCsHello, 0)
-	if err := enc.Encode(h); err != nil {
-		log.Fatalf("could not encode buf: %v", err)
-	}
-	log.Printf("hello: send %d bytes: %b", buf.Len(), buf.Bytes())
-
-	n, err := buf.WriteTo(conn)
-	if err != nil {
-		log.Fatalf("could not send hello: %v", err)
-	}
-	log.Printf("hello: send %d bytes", n)
-
-	buf.Grow(mraBufLen)
-	n, err = buf.ReadFrom(conn)
+	err = sendHello(conn, seq, &b)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("read %d %v\n", n, buf.Bytes())
+	seq += 1
+
+	err = sendAuth(conn, seq, username, password, mrim.StatusOnline, &b)
+	if err != nil {
+		log.Fatal(err)
+	}
+	seq += 1
+}
+
+// TODO(varankinv): read packet with bufio reader
+func readConn(conn io.ReadWriter) (msg uint32, data []byte, err error) {
+	b := make([]byte, 44)
+	m, err := io.ReadFull(conn, b)
+	if err != nil {
+		return
+	}
+	log.Printf("read %d %v\n", m, b)
+
+	var rxSeq uint32
+	rxSeq, msg, data, err = mrim.Unpack(b)
+	if err != nil {
+		return 0, nil, fmt.Errorf("could not unpack rx: %v", err)
+	}
+	log.Printf("unpack %d %04x %v\n", rxSeq, msg, data)
+	return
+}
+
+func sendHello(conn io.ReadWriter, seq uint32, b *bytes.Buffer) error {
+	err := mrim.Pack(b, seq, mrim.MrimCSHello, 0)
+	if err != nil {
+		return err
+	}
+	log.Printf("hello: sending %d %v\n", b.Len(), b.Bytes())
+
+	n, err := b.WriteTo(conn)
+	if err != nil {
+		return fmt.Errorf("could not send hello: %v", err)
+	}
+	log.Printf("hello: send %d bytes\n", n)
+
+	msg, _, err := readConn(conn)
+	if err != nil {
+		return err
+	}
+
+	if msg == mrim.MrimCSHelloAck {
+		log.Println("received \"MRIM_CS_HELLO_ACK\" packet")
+		return nil
+	}
+	return fmt.Errorf("unknown packet received: %04x", msg)
+}
+
+func sendAuth(conn io.ReadWriter, seq uint32, username, password string, status uint32, b *bytes.Buffer) error {
+	dlen := len(username) + len(password) + len(versionTxt) + 24 // 24 = 4 * 6 (online status (uint32) and 5 dw (uint32))
+	err := mrim.Pack(b, seq, mrim.MrimCSLogin2, uint32(dlen), username, password, status, versionTxt, 0, 0, 0, 0, 0)
+	if err != nil {
+		return err
+	}
+	log.Printf("auth: sending %d %v\n", b.Len(), b.Bytes())
+
+	n, err := b.WriteTo(conn)
+	if err != nil {
+		return fmt.Errorf("could not send auth: %v", err)
+	}
+	log.Printf("auth: send %d bytes\n", n)
+
+	msg, _, err := readConn(conn)
+	if err != nil {
+		return err
+	}
+
+	switch msg {
+	case mrim.MrimCSLoginAck:
+		log.Println("received \"MRIM_CS_LOGIN_ACK\" packet")
+		return nil
+	case mrim.MrimCSLoginRej:
+		log.Println("received \"MRIM_CS_LOGIN_REJ\" packet")
+		return nil
+	}
+
+	return fmt.Errorf("unknown packet received: %04x", msg)
 }
