@@ -11,24 +11,31 @@ const (
 )
 
 const (
-	MrimCSHello          = 0x1001
-	MrimCSHelloAck       = 0x1002
-	MrimCSLoginAck       = 0x1004
-	MrimCSLoginRej       = 0x1005
-	MrimCSPing           = 0x1006
-	MrimCSMessage        = 0x1008
-	MrimCSMessageAck     = 0x1009
-	MrimCSMessageRecv    = 0x1011
-	MrimCSMessageStatus  = 0x1012
-	MrimCSUserStatus     = 0x100F
-	MrimCSLogout         = 0x1013
-	MrimCSGetMpopSession = 0x1024
-	MrimCSMpopSession    = 0x1025
-	MrimCSLogin2         = 0x1038
+	MrimCSHello            = 0x1001
+	MrimCSHelloAck         = 0x1002
+	MrimCSLoginAck         = 0x1004
+	MrimCSLoginRej         = 0x1005
+	MrimCSPing             = 0x1006
+	MrimCSMessage          = 0x1008
+	MrimCSMessageAck       = 0x1009
+	MrimCSMessageRecv      = 0x1011
+	MrimCSMessageStatus    = 0x1012
+	MrimCSLogout           = 0x1013
+	MrimCSConnectionParams = 0x1014
+	MrimCSUserInfo         = 0x1015
+	MrimCSAddContact       = 0x1019
+	MrimCSUserStatus       = 0x100F
+	MrimCSGetMpopSession   = 0x1024
+	MrimCSMpopSession      = 0x1025
+	MrimCSAnketaInfo       = 0x1028
+	MrimCSWPRequest        = 0x1028
+	MrimCSMailboxStatus    = 0x1033
+	MrimCSContactList2     = 0x1037
+	MrimCSLogin2           = 0x1038
 )
 
 const (
-	StatusOffline uint32 = iota
+	StatusOffline        uint32 = iota
 	StatusOnline
 	StatusAway
 	StatusUndeterminated
@@ -43,7 +50,7 @@ const (
 )
 
 const (
-	MrimCSWPRequestParamUser uint = iota
+	MrimCSWPRequestParamUser      uint = iota
 	MrimCSWPRequestParamDomain
 	MrimCSWPRequestParamNickname
 	MrimCSWPRequestParamFirstname

@@ -15,9 +15,8 @@ import (
 type Conn struct {
 	Reader
 	Writer
-	conn        io.ReadWriteCloser
-	helloAck    bool
-	pingTimeout uint32
+	conn     io.ReadWriteCloser
+	helloAck bool
 }
 
 func Dial(ctx context.Context, addr string) (*Conn, error) {
@@ -46,44 +45,46 @@ func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Conn) Hello() error {
+func (c *Conn) Hello() (uint32, error) {
 	if c.helloAck {
-		return errors.New("repetitive hello call")
+		return 0, errors.New("repetitive hello call")
 	}
 	return c.hello(0)
 }
 
-func (c *Conn) hello(seq uint32) error {
+func (c *Conn) hello(seq uint32) (pingInterval uint32, err error) {
 	if c.helloAck {
-		return nil
+		return 0, nil
 	}
 
-	err := c.WriteHeader(seq, MrimCSHello, 0)
+	err = c.WriteHeader(seq, MrimCSHello, 0)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	err = c.Flush()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	seq, msg, err := c.ReadHeader()
 	if err != nil {
-		return err
-	}
-	if msg != MrimCSHelloAck {
-		return fmt.Errorf("unknown packet received: %04x", msg)
+		return 0, err
 	}
 
 	body, err := c.ReadBody()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	c.helloAck = true
-	c.pingTimeout = binary.LittleEndian.Uint32(body)
-	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", seq, msg, c.pingTimeout)
 
-	return nil
+	if msg != MrimCSHelloAck {
+		return 0, fmt.Errorf("unknown packet received: %04x", msg)
+	}
+
+	c.helloAck = true
+	pingInterval = binary.LittleEndian.Uint32(body)
+	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", seq, msg, pingInterval)
+
+	return
 }
 
 type AuthError string
@@ -94,7 +95,7 @@ func (e AuthError) Error() string {
 
 func (c *Conn) Auth(username, password string, status uint32, clientDesc string) error {
 	var seq uint32
-	if err := c.hello(seq); err != nil {
+	if _, err := c.hello(seq); err != nil {
 		return err
 	}
 	seq++
@@ -151,7 +152,7 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 
 func (c *Conn) Ping() error {
 	var seq uint32
-	if err := c.hello(seq); err != nil {
+	if _, err := c.hello(seq); err != nil {
 		return err
 	}
 	seq++
@@ -159,36 +160,29 @@ func (c *Conn) Ping() error {
 	if err != nil {
 		return err
 	}
-	err = c.Flush()
-	if err != nil {
-		return err
-	}
-	_, err = c.ReadBody()
-	if err != nil {
-		return err
-	}
-	return err
+	return c.Flush()
 }
 
 func (c *Conn) SendMessage(to string, msg []byte, flags uint32) error {
-	var seq uint32
-	if err := c.hello(seq); err != nil {
-		return err
+	if !c.helloAck {
+		return errors.New("no hello")
 	}
-	seq++
-	return c.sendMessage(seq, to, msg, flags)
+	return c.sendMessage(0, to, msg, flags)
 }
 
 func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) error {
+	log.Printf("send message: %d, %q, %q\n", seq, to, message)
+
+	// 4 + len(str) for LPSSIZE(to)
 	// 4 + len(str) for LPSSIZE(message)
-	// 4 + len(0) for LPSSIZE(msg_rtf)
+	// 4 + len(" ") for LPSSIZE(msg_rtf)
 	// 4 for flags uint32
-	dlen := 4 + len(message) + 4 + 4
+	messageRTF := []byte{' '}
+	dlen := 4 + len(to) + 4 + len(message) + 4 + len(messageRTF) + 4 + 4
 	err := c.WriteHeader(seq, MrimCSMessage, uint32(dlen))
 	if err != nil {
 		return err
 	}
-	var messageRTF []byte
 	err = c.WriteData(flags, to, message, messageRTF)
 	if err != nil {
 		return err
@@ -198,15 +192,15 @@ func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) 
 		return err
 	}
 
-	//seq, msg, err := c.ReadHeader()
-	//if err != nil {
-	//	return err
-	//}
+	seq, msg, err := c.ReadHeader()
+	if err != nil {
+		return err
+	}
 	body, err := c.ReadBody()
 	if err != nil {
 		return err
 	}
-	log.Printf("received \"???\" packet: %d, %04x %b\n", seq, 0, body)
+	log.Printf("received \"???\" packet: %d, %04x %q\n", seq, msg, body)
 	return nil
 }
 
@@ -235,7 +229,7 @@ func (p *Reader) ReadBody() ([]byte, error) {
 	}
 	// TODO(varankinv): what those first n-dlen bytes for?
 	body := p.buf[n-int(p.dlen): n]
-	log.Printf("read body: %d bytes, dlen %d, %b\n", n, p.dlen, body)
+	log.Printf("read body: %d bytes, dlen %d\n", n, p.dlen)
 	p.dlen = 0
 	return body, nil
 }
@@ -335,10 +329,12 @@ func packData(w *bufio.Writer, v interface{}) error {
 	}
 
 	switch v := v.(type) {
-	case uint32:
-		return binary.Write(w, binary.LittleEndian, v)
 	case int:
 		return binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint:
+		return binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint32:
+		return binary.Write(w, binary.LittleEndian, v)
 	case string:
 		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
 		if err != nil {
@@ -357,6 +353,8 @@ func packData(w *bufio.Writer, v interface{}) error {
 		if err != nil {
 			return err
 		}
+	default:
+		return fmt.Errorf("unsupported type %T", v)
 	}
 	return nil
 }
