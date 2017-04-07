@@ -86,98 +86,15 @@ func main() {
 	}
 }
 
-func writeHeader(conn io.ReadWriter, seq, msg, dlen uint32) (err error) {
-	var buf bytes.Buffer
-
-	err = binary.Write(&buf, binary.LittleEndian, mrim.CSMagic)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(&buf, binary.LittleEndian, mrim.ProtoVersion)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(&buf, binary.LittleEndian, seq)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(&buf, binary.LittleEndian, msg)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(&buf, binary.LittleEndian, dlen)
-	if err != nil {
-		return err
-	}
-
-	var from, fromPort uint32 // not used, must be zero
-	err = binary.Write(&buf, binary.LittleEndian, from)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(&buf, binary.LittleEndian, fromPort)
-	if err != nil {
-		return err
-	}
-
-	reserved := make([]byte, 16) // not used
-	_, err = buf.Write(reserved)
-	if err != nil {
-		return err
-	}
-
-	_, err = buf.WriteTo(conn)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func readHeader(conn io.ReadWriter, seq, msg, dlen *uint32) (err error) {
-	var magic, version uint32
-	err = binary.Read(conn, binary.LittleEndian, &magic)
-	if err != nil {
-		return err
-	}
-	if magic != mrim.CSMagic {
-		return fmt.Errorf("wrong magic: %08x", magic)
-	}
-	err = binary.Read(conn, binary.LittleEndian, &version)
-	if err != nil {
-		return err
-	}
-	//log.Printf("read head: version %d\n", version)
-	err = binary.Read(conn, binary.LittleEndian, seq)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(conn, binary.LittleEndian, msg)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(conn, binary.LittleEndian, dlen)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func readBody(conn io.ReadWriteCloser, dlen uint32) (err error) {
-	// TODO(varankinv):
-	buf := make([]byte, dlen + 65000)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return err
-	}
-	log.Printf("read body: %d bytes, dlen %d, %q\n", n, dlen, buf[:n])
-	return nil
-}
-
 func sendHello(conn io.ReadWriteCloser, seq uint32) (err error) {
-	err = writeHeader(conn, seq, mrim.MrimCSHello, 0)
+	packet := mraWriter{
+		wr: conn,
+	}
+	err = packet.WriteHeader(seq, mrim.MrimCSHello, 0)
 	if err != nil {
 		return err
 	}
+	packet.Flush()
 
 	var rxSeq, rxMsg, rxDlen uint32
 	err = readHeader(conn, &rxSeq, &rxMsg, &rxDlen)
@@ -193,46 +110,29 @@ func sendHello(conn io.ReadWriteCloser, seq uint32) (err error) {
 	return readBody(conn, rxDlen)
 }
 
-type packet struct {
-	buf bytes.Buffer
-}
-
-func (p *packet) WriteData(v ...interface{}) (err error) {
-	for _, v := range v {
-		err = packData(&p.buf, v)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (p *packet) WriteTo(w io.Writer) (int64, error) {
-	return p.buf.WriteTo(w)
-}
-
 func sendAuth(conn io.ReadWriteCloser, seq uint32, username, password string, status uint32) (err error) {
+	packet := mraWriter{
+		wr: conn,
+	}
 	dlen := 4 + len(username) + 4 + len(password) + 4 + len(versionTxt) + 20 // 24 = 4 * 6 (online status (uint32) and 4 internal fields (uint32))
-	err = writeHeader(conn, seq, mrim.MrimCSLogin2, uint32(dlen))
+	err = packet.WriteHeader(seq, mrim.MrimCSLogin2, uint32(dlen))
 	if err != nil {
 		return err
 	}
-	p := packet{}
-	err = p.WriteData(username, password, status, versionTxt)
+	err = packet.WriteData(username, password, status, versionTxt)
 	if err != nil {
 		return err
 	}
 	for i := 0; i < 5; i++ {
-		err = p.WriteData(uint32(0)) // internal fields
+		err = packet.WriteData(uint32(0)) // internal fields
 		if err != nil {
 			return err
 		}
 	}
-	n, err := p.WriteTo(conn)
+	err = packet.Flush()
 	if err != nil {
 		return err
 	}
-	log.Printf("auth: send %d bytes\n", n)
 
 	var rxSeq, rxMsg, rxDlen uint32
 	err = readHeader(conn, &rxSeq, &rxMsg, &rxDlen)
@@ -255,6 +155,114 @@ func sendAuth(conn io.ReadWriteCloser, seq uint32, username, password string, st
 	}
 
 	return fmt.Errorf("unknown packet received: %04x", rxMsg)
+}
+
+type mraWriter struct {
+	wr  io.Writer
+	buf bytes.Buffer
+}
+
+func (p *mraWriter) WriteHeader(seq, msg, dlen uint32) error {
+	return writeHeader(&p.buf, seq, msg, dlen)
+}
+
+func (p *mraWriter) WriteData(v ...interface{}) (err error) {
+	for _, v := range v {
+		err = packData(&p.buf, v)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *mraWriter) Flush() error {
+	n, err := p.buf.WriteTo(p.wr)
+	log.Printf("packet: send %d bytes\n", n)
+	return err
+}
+
+func (p *mraWriter) Reset(w io.Writer) {
+	p.wr = w
+	p.buf.Reset()
+}
+
+var headerReserved = make([]byte, 16) // not used, must be filled with zeroes
+
+func writeHeader(w io.Writer, seq, msg, dlen uint32) (err error) {
+	err = binary.Write(w, binary.LittleEndian, mrim.CSMagic)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(w, binary.LittleEndian, mrim.ProtoVersion)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(w, binary.LittleEndian, seq)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(w, binary.LittleEndian, msg)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(w, binary.LittleEndian, dlen)
+	if err != nil {
+		return err
+	}
+
+	var from, fromPort uint32 // not used, must be zero
+	err = binary.Write(w, binary.LittleEndian, from)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(w, binary.LittleEndian, fromPort)
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(headerReserved)
+	return err
+}
+
+func readHeader(r io.Reader, seq, msg, dlen *uint32) (err error) {
+	var magic, version uint32
+	err = binary.Read(r, binary.LittleEndian, &magic)
+	if err != nil {
+		return err
+	}
+	if magic != mrim.CSMagic {
+		return fmt.Errorf("wrong magic: %08x", magic)
+	}
+	err = binary.Read(r, binary.LittleEndian, &version)
+	if err != nil {
+		return err
+	}
+	//log.Printf("read head: version %d\n", version)
+	err = binary.Read(r, binary.LittleEndian, seq)
+	if err != nil {
+		return err
+	}
+	err = binary.Read(r, binary.LittleEndian, msg)
+	if err != nil {
+		return err
+	}
+	err = binary.Read(r, binary.LittleEndian, dlen)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func readBody(conn io.ReadWriteCloser, dlen uint32) (err error) {
+	// TODO(varankinv):
+	buf := make([]byte, dlen+65000)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	log.Printf("read body: %d bytes, dlen %d, %q\n", n, dlen, buf[:n])
+	return nil
 }
 
 func packData(buf *bytes.Buffer, v interface{}) error {
