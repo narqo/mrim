@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/narqo/mrim"
 )
@@ -64,18 +65,41 @@ func main() {
 	}
 	defer mrconn.Close()
 
+	pingInterval, err := mrconn.Hello()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go doPing(mrconn, pingInterval)
+
 	err = mrconn.Auth(username, password, mrim.StatusOnline, versionTxt)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	//err = mrconn.Ping()
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
+	sendMsg(mrconn, "hello again")
 
-	err = mrconn.SendMessage("v.varankin@corp.mail.ru", []byte("Hello"), 0)
+	<-time.After(45 * time.Second)
+}
+
+func sendMsg(conn *mrim.Conn, msg string) error {
+	err := conn.SendMessage("v.varankin@corp.mail.ru", []byte(msg), 0)
 	if err != nil {
 		log.Fatal(err)
+	}
+	return nil
+}
+
+func doPing(conn *mrim.Conn, interval uint32) {
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			log.Println("ping")
+			err := conn.Ping()
+			if err != nil {
+				log.Printf("ping error: %v\n", err)
+			}
+		}
 	}
 }
