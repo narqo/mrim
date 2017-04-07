@@ -170,6 +170,46 @@ func (c *Conn) Ping() error {
 	return err
 }
 
+func (c *Conn) SendMessage(to string, msg []byte, flags uint32) error {
+	var seq uint32
+	if err := c.hello(seq); err != nil {
+		return err
+	}
+	seq++
+	return c.sendMessage(seq, to, msg, flags)
+}
+
+func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) error {
+	// 4 + len(str) for LPSSIZE(message)
+	// 4 + len(0) for LPSSIZE(msg_rtf)
+	// 4 for flags uint32
+	dlen := 4 + len(message) + 4 + 4
+	err := c.WriteHeader(seq, MrimCSMessage, uint32(dlen))
+	if err != nil {
+		return err
+	}
+	var messageRTF []byte
+	err = c.WriteData(flags, to, message, messageRTF)
+	if err != nil {
+		return err
+	}
+	err = c.Flush()
+	if err != nil {
+		return err
+	}
+
+	//seq, msg, err := c.ReadHeader()
+	//if err != nil {
+	//	return err
+	//}
+	body, err := c.ReadBody()
+	if err != nil {
+		return err
+	}
+	log.Printf("received \"???\" packet: %d, %04x %b\n", seq, 0, body)
+	return nil
+}
+
 type Reader struct {
 	R *bufio.Reader
 
@@ -305,6 +345,15 @@ func packData(w *bufio.Writer, v interface{}) error {
 			return err
 		}
 		_, err = w.WriteString(v)
+		if err != nil {
+			return err
+		}
+	case []byte:
+		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(v)
 		if err != nil {
 			return err
 		}

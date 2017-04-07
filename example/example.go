@@ -68,7 +68,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = mrconn.Ping()
+
+	//err = mrconn.Ping()
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+
+	err = mrconn.SendMessage("v.varankin@corp.mail.ru", []byte("Hello"), 0)
 	if err != nil {
 		log.Fatal(err)
 	}
