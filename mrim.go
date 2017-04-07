@@ -159,6 +159,10 @@ func (c *Conn) Ping() error {
 	if err != nil {
 		return err
 	}
+	err = c.Flush()
+	if err != nil {
+		return err
+	}
 	_, err = c.ReadBody()
 	if err != nil {
 		return err
@@ -192,6 +196,7 @@ func (p *Reader) ReadBody() ([]byte, error) {
 	// TODO(varankinv): what those first n-dlen bytes for?
 	body := p.buf[n-int(p.dlen): n]
 	log.Printf("read body: %d bytes, dlen %d, %b\n", n, p.dlen, body)
+	p.dlen = 0
 	return body, nil
 }
 
