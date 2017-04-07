@@ -140,6 +140,18 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 	return nil
 }
 
+func (c *Conn) Ping() error {
+	err := c.WriteHeader(0, MrimCSPing, 0)
+	if err != nil {
+		return err
+	}
+	_, err = c.ReadBody()
+	if err != nil {
+		return err
+	}
+	return err
+}
+
 type Reader struct {
 	R *bufio.Reader
 

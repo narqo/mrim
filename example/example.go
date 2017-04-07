@@ -58,17 +58,21 @@ func main() {
 		IP:   ip,
 		Port: int(port),
 	}
-	mconn, err := mrim.Dial(ctx, loginAddr.String())
+	mrconn, err := mrim.Dial(ctx, loginAddr.String())
 	if err != nil {
 		log.Fatalf("could not dial to loginaddr: %v", err)
 	}
-	defer mconn.Close()
+	defer mrconn.Close()
 
-	err = mconn.Hello()
+	err = mrconn.Hello()
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = mconn.Auth(username, password, mrim.StatusOnline, versionTxt)
+	err = mrconn.Auth(username, password, mrim.StatusOnline, versionTxt)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = mrconn.Ping()
 	if err != nil {
 		log.Fatal(err)
 	}
