@@ -21,11 +21,18 @@ type Conn struct {
 
 func Dial(ctx context.Context, addr string) (*Conn, error) {
 	dialer := &net.Dialer{
-		Timeout: 35 * time.Second,
+		Timeout: 25 * time.Second,
 	}
 	nconn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
+	}
+	if tconn, ok := nconn.(*net.TCPConn); ok {
+		err := tconn.SetKeepAlive(true)
+		if err != nil {
+			nconn.Close()
+			return nil, err
+		}
 	}
 	conn := NewConn(nconn)
 	return conn, nil
@@ -34,8 +41,9 @@ func Dial(ctx context.Context, addr string) (*Conn, error) {
 const mraBufLen = 65536
 
 func NewConn(conn io.ReadWriteCloser) *Conn {
+	var b [mraBufLen]byte
 	return &Conn{
-		Reader: Reader{R: bufio.NewReader(conn), buf: make([]byte, mraBufLen)},
+		Reader: Reader{R: bufio.NewReader(conn), buf: b[:]},
 		Writer: Writer{W: bufio.NewWriter(conn)},
 		conn:   conn,
 	}
@@ -57,7 +65,7 @@ func (c *Conn) hello(seq uint32) (pingInterval uint32, err error) {
 		return 0, nil
 	}
 
-	err = c.WriteHeader(seq, MrimCSHello, 0)
+	err = c.WriteHeader(seq, mrimCSHello, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -66,21 +74,17 @@ func (c *Conn) hello(seq uint32) (pingInterval uint32, err error) {
 		return 0, err
 	}
 
-	seq, msg, err := c.ReadHeader()
+	msg, body, err := c.readPacket()
 	if err != nil {
 		return 0, err
 	}
 
-	body, err := c.ReadBody()
-	if err != nil {
-		return 0, err
-	}
-
-	if msg != MrimCSHelloAck {
+	if msg != mrimCSHelloAck {
 		return 0, fmt.Errorf("unknown packet received: %04x", msg)
 	}
 
 	c.helloAck = true
+
 	pingInterval = binary.LittleEndian.Uint32(body)
 	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", seq, msg, pingInterval)
 
@@ -107,7 +111,7 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 	// 24 = 4 * 6 (online status (uint32) and 5 internal fields (uint32))
 	dlen := 4 + len(username) + 4 + len(password) + 4 + len(clientDesc) + 24
 
-	err := c.WriteHeader(seq, MrimCSLogin2, uint32(dlen))
+	err := c.WriteHeader(seq, mrimCSLogin2, uint32(dlen))
 	if err != nil {
 		return err
 	}
@@ -123,21 +127,15 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 		return err
 	}
 
-	seq, msg, err := c.ReadHeader()
-	if err != nil {
-		return err
-	}
-
-	body, err := c.ReadBody()
+	msg, body, err := c.readPacket()
 	if err != nil {
 		return err
 	}
 
 	switch msg {
-	case MrimCSLoginAck:
+	case mrimCSLoginAck:
 		log.Printf("received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", seq, msg)
-		return nil
-	case MrimCSLoginRej:
+	case mrimCSLoginRej:
 		reason, err := unpackLPS(body)
 		if err != nil {
 			return fmt.Errorf("cound not read auth rejection reason: %v", err)
@@ -147,6 +145,18 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 	default:
 		return fmt.Errorf("unknown packet received: %04x", msg)
 	}
+
+	for {
+		msg, _, err := c.readPacket()
+		if err != nil {
+			return err
+		}
+		if msg == mrimCSContactList2 {
+			log.Printf("received \"MRIM_CS_CONTACT_LIST2\" packet: %04x\n", msg)
+			break
+		}
+	}
+
 	return nil
 }
 
@@ -156,7 +166,7 @@ func (c *Conn) Ping() error {
 		return err
 	}
 	seq++
-	err := c.WriteHeader(seq, MrimCSPing, 0)
+	err := c.WriteHeader(seq, mrimCSPing, 0)
 	if err != nil {
 		return err
 	}
@@ -167,7 +177,7 @@ func (c *Conn) SendMessage(to string, msg []byte, flags uint32) error {
 	if !c.helloAck {
 		return errors.New("no hello")
 	}
-	return c.sendMessage(0, to, msg, flags)
+	return c.sendMessage(42, to, msg, flags)
 }
 
 func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) error {
@@ -179,7 +189,7 @@ func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) 
 	// 4 for flags uint32
 	messageRTF := []byte{' '}
 	dlen := 4 + len(to) + 4 + len(message) + 4 + len(messageRTF) + 4 + 4
-	err := c.WriteHeader(seq, MrimCSMessage, uint32(dlen))
+	err := c.WriteHeader(seq, mrimCSMessage, uint32(dlen))
 	if err != nil {
 		return err
 	}
@@ -187,21 +197,21 @@ func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) 
 	if err != nil {
 		return err
 	}
-	err = c.Flush()
-	if err != nil {
-		return err
-	}
+	return c.Flush()
+}
 
-	seq, msg, err := c.ReadHeader()
+func (c *Conn) readPacket() (msg uint32, body []byte, err error) {
+	var seq uint32
+	seq, msg, err = c.ReadHeader()
 	if err != nil {
-		return err
+		return
 	}
-	body, err := c.ReadBody()
+	body, err = c.ReadBody()
 	if err != nil {
-		return err
+		return
 	}
 	log.Printf("received \"???\" packet: %d, %04x %q\n", seq, msg, body)
-	return nil
+	return
 }
 
 type Reader struct {
@@ -282,6 +292,7 @@ func (p *Writer) WriteData(v ...interface{}) (err error) {
 }
 
 func (p *Writer) Flush() error {
+	log.Printf("writer flush: %d\n", p.W.Buffered())
 	return p.W.Flush()
 }
 

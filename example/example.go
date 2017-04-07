@@ -65,12 +65,12 @@ func main() {
 	}
 	defer mrconn.Close()
 
-	pingInterval, err := mrconn.Hello()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	go doPing(mrconn, pingInterval)
+	//pingInterval, err := mrconn.Hello()
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//
+	//go doPing(mrconn, pingInterval)
 
 	err = mrconn.Auth(username, password, mrim.StatusOnline, versionTxt)
 	if err != nil {
@@ -83,10 +83,16 @@ func main() {
 }
 
 func sendMsg(conn *mrim.Conn, msg string) error {
-	err := conn.SendMessage("v.varankin@corp.mail.ru", []byte(msg), 0)
+	err := conn.SendMessage("v.varankin@corp.mail.ru", []byte(msg), mrim.MessageFlagNorecv)
 	if err != nil {
 		log.Fatal(err)
 	}
+	/*
+	err = conn.Ping()
+	if err != nil {
+		log.Printf("ping error: %v\n", err)
+	}
+	*/
 	return nil
 }
 

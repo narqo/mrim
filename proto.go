@@ -1,47 +1,51 @@
 package mrim
 
 const (
-	ProtoVersionMajor = 1
-	ProtoVersionMinor = 8
+	protoVersionMajor = 1
+	protoVersionMinor = 8
 )
 
 const (
-	ProtoVersion uint32 = (ProtoVersionMajor << 16) | ProtoVersionMinor
+	ProtoVersion uint32 = (protoVersionMajor << 16) | protoVersionMinor
 	CSMagic      uint32 = 0xDEADBEEF
 )
 
 const (
-	MrimCSHello            = 0x1001
-	MrimCSHelloAck         = 0x1002
-	MrimCSLoginAck         = 0x1004
-	MrimCSLoginRej         = 0x1005
-	MrimCSPing             = 0x1006
-	MrimCSMessage          = 0x1008
-	MrimCSMessageAck       = 0x1009
-	MrimCSMessageRecv      = 0x1011
-	MrimCSMessageStatus    = 0x1012
-	MrimCSLogout           = 0x1013
-	MrimCSConnectionParams = 0x1014
-	MrimCSUserInfo         = 0x1015
-	MrimCSAddContact       = 0x1019
-	MrimCSUserStatus       = 0x100F
-	MrimCSGetMpopSession   = 0x1024
-	MrimCSMpopSession      = 0x1025
-	MrimCSAnketaInfo       = 0x1028
-	MrimCSWPRequest        = 0x1028
-	MrimCSMailboxStatus    = 0x1033
-	MrimCSContactList2     = 0x1037
-	MrimCSLogin2           = 0x1038
+	mrimCSHello                = 0x1001
+	mrimCSHelloAck             = 0x1002
+	mrimCSLoginAck             = 0x1004
+	mrimCSLoginRej             = 0x1005
+	mrimCSPing                 = 0x1006
+	mrimCSMessage              = 0x1008
+	mrimCSMessageAck           = 0x1009
+	mrimCSUserStatus           = 0x100F
+	mrimCSMessageRecv          = 0x1011
+	mrimCSMessageStatus        = 0x1012
+	mrimCSLogout               = 0x1013
+	mrimCSConnectionParams     = 0x1014
+	mrimCSUserInfo             = 0x1015
+	mrimCSAddContact           = 0x1019
+	mrimCSAddContactAck        = 0x101A
+	mrimCSModifyContact        = 0x101B
+	mrimCSModifyContactAck     = 0x101C
+	mrimCSOfflineMessageAck    = 0x101D
+	mrimCSDeleteOfflineMessage = 0x101E
+	mrimCSGetMpopSession       = 0x1024
+	mrimCSMpopSession          = 0x1025
+	mrimCSAnketaInfo           = 0x1028
+	mrimCSWPRequest            = 0x1029
+	mrimCSMailboxStatus        = 0x1033
+	mrimCSContactList2         = 0x1037
+	mrimCSLogin2               = 0x1038
 )
 
 const (
-	StatusOffline        uint32 = iota
-	StatusOnline
-	StatusAway
-	StatusUndeterminated
+	StatusOffline        = 0x00000000
+	StatusOnline         = 0x00000001
+	StatusAway           = 0x00000002
+	StatusUndeterminated = 0x00000003
+	StatusFlagInvisible  = 0x80000000
 )
-
-const StatusFlagInvisible = 0x80000000
 
 const (
 	MessageFlagOffline   = 0x00000001
@@ -50,11 +54,11 @@ const (
 )
 
 const (
-	MrimCSWPRequestParamUser      uint = iota
-	MrimCSWPRequestParamDomain
-	MrimCSWPRequestParamNickname
-	MrimCSWPRequestParamFirstname
-	MrimCSWPRequestParamLastname
-	MrimCSWPRequestParamSex
-	MrimCSWPRequestParamBirthday
+	mrimCSWPRequestParamUser      uint = iota
+	mrimCSWPRequestParamDomain
+	mrimCSWPRequestParamNickname
+	mrimCSWPRequestParamFirstname
+	mrimCSWPRequestParamLastname
+	mrimCSWPRequestParamSex
+	mrimCSWPRequestParamBirthday
 )
