@@ -64,10 +64,6 @@ func main() {
 	}
 	defer mrconn.Close()
 
-	err = mrconn.Hello()
-	if err != nil {
-		log.Fatal(err)
-	}
 	err = mrconn.Auth(username, password, mrim.StatusOnline, versionTxt)
 	if err != nil {
 		log.Fatal(err)

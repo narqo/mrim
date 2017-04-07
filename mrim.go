@@ -93,7 +93,12 @@ func (e AuthError) Error() string {
 }
 
 func (c *Conn) Auth(username, password string, status uint32, clientDesc string) error {
-	return c.auth(0, username, password, status, clientDesc)
+	var seq uint32
+	if err := c.hello(seq); err != nil {
+		return err
+	}
+	seq++
+	return c.auth(seq, username, password, status, clientDesc)
 }
 
 func (c *Conn) auth(seq uint32, username, password string, status uint32, clientDesc string) error {
@@ -145,7 +150,12 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 }
 
 func (c *Conn) Ping() error {
-	err := c.WriteHeader(0, MrimCSPing, 0)
+	var seq uint32
+	if err := c.hello(seq); err != nil {
+		return err
+	}
+	seq++
+	err := c.WriteHeader(seq, MrimCSPing, 0)
 	if err != nil {
 		return err
 	}
