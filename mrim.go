@@ -2,6 +2,7 @@ package mrim
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -53,106 +54,115 @@ func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
+func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
+	// TODO: acquire sequence
+	var seq uint32
+
+	var p Packet
+	p.Seq = seq
+	p.Msg = msg
+	p.Len = uint32(len(data))
+	p.Data = data
+
+	err := c.doSend(ctx, p)
+	// TODO: release sequence
+	return err
+}
+
+func (c *Conn) doSend(ctx context.Context, p Packet) error {
+	err := c.WritePacket(p)
+	if err != nil {
+		return err
+	}
+	return c.Flush()
+}
+
 func (c *Conn) Hello() (uint32, error) {
 	if c.helloAck {
 		return 0, errors.New("repetitive hello call")
 	}
-	return c.hello(0)
+	return c.hello()
 }
 
-func (c *Conn) hello(seq uint32) (pingInterval uint32, err error) {
+func (c *Conn) hello() (pingInterval uint32, err error) {
 	if c.helloAck {
 		return 0, nil
 	}
 
-	err = c.WriteHeader(seq, mrimCSHello, 0)
-	if err != nil {
-		return 0, err
-	}
-	err = c.Flush()
+	err = c.Do(context.TODO(), mrimCSHello, nil)
 	if err != nil {
 		return 0, err
 	}
 
-	msg, body, err := c.readPacket()
+	p, err := c.ReadPacket()
 	if err != nil {
 		return 0, err
 	}
 
-	if msg != mrimCSHelloAck {
-		return 0, fmt.Errorf("unknown packet received: %04x", msg)
+	if p.Msg != mrimCSHelloAck {
+		return 0, fmt.Errorf("unknown packet received: %04x", p.Msg)
 	}
 
 	c.helloAck = true
 
-	pingInterval = binary.LittleEndian.Uint32(body)
-	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", seq, msg, pingInterval)
+	pingInterval = binary.LittleEndian.Uint32(p.Data)
+	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", p.Seq, p.Msg, pingInterval)
 
 	return
 }
 
-type AuthError string
+type AuthError struct {
+	s string
+}
 
 func (e AuthError) Error() string {
-	return string(e)
+	return e.s
 }
 
 func (c *Conn) Auth(username, password string, status uint32, clientDesc string) error {
-	var seq uint32
-	if _, err := c.hello(seq); err != nil {
+	if _, err := c.hello(); err != nil {
 		return err
 	}
-	seq++
-	return c.auth(seq, username, password, status, clientDesc)
-}
 
-func (c *Conn) auth(seq uint32, username, password string, status uint32, clientDesc string) error {
-	// 4 + len(str) is for LPSSIZE
-	// 24 = 4 * 6 (online status (uint32) and 5 internal fields (uint32))
-	dlen := 4 + len(username) + 4 + len(password) + 4 + len(clientDesc) + 24
-
-	err := c.WriteHeader(seq, mrimCSLogin2, uint32(dlen))
-	if err != nil {
-		return err
-	}
-	err = c.WriteData(username, password, status, clientDesc)
+	var data bytes.Buffer
+	writeData(&data, username)
+	writeData(&data, password)
+	writeData(&data, status)
+	writeData(&data, clientDesc)
 	for i := 0; i < 5; i++ {
-		err = c.WriteData(uint32(0)) // internal fields
-		if err != nil {
-			return err
-		}
+		writeData(&data, uint32(0)) // internal fields
 	}
-	err = c.Flush()
+	err := c.Do(context.TODO(), mrimCSLogin2, data.Bytes())
 	if err != nil {
 		return err
 	}
 
-	msg, body, err := c.readPacket()
+	p, err := c.ReadPacket()
 	if err != nil {
 		return err
 	}
 
-	switch msg {
+	switch p.Msg {
 	case mrimCSLoginAck:
-		log.Printf("received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", seq, msg)
+		log.Printf("received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", p.Seq, p.Msg)
 	case mrimCSLoginRej:
-		reason, err := unpackLPS(body)
+		reason, err := unpackLPS(p.Data)
 		if err != nil {
 			return fmt.Errorf("cound not read auth rejection reason: %v", err)
 		}
-		log.Printf("received \"MRIM_CS_LOGIN_REJ\" packet: %d, %04x, reason %q\n", seq, msg, reason)
-		return AuthError(reason)
+		log.Printf("received \"MRIM_CS_LOGIN_REJ\" packet: %d, %04x, reason %q\n", p.Seq, p.Msg, reason)
+		return AuthError{reason}
 	default:
-		return fmt.Errorf("unknown packet received: %04x", msg)
+		return fmt.Errorf("unknown packet received: %04x", p.Msg)
 	}
 
 	for {
-		msg, _, err := c.readPacket()
+		p, err = c.ReadPacket()
 		if err != nil {
 			return err
 		}
-		if msg == mrimCSContactList2 {
-			log.Printf("received \"MRIM_CS_CONTACT_LIST2\" packet: %04x\n", msg)
+		if p.Msg == mrimCSContactList2 {
+			log.Printf("received \"MRIM_CS_CONTACT_LIST2\" packet: %04x\n", p.Msg)
 			break
 		}
 	}
@@ -161,180 +171,66 @@ func (c *Conn) auth(seq uint32, username, password string, status uint32, client
 }
 
 func (c *Conn) Ping() error {
-	var seq uint32
-	if _, err := c.hello(seq); err != nil {
+	if _, err := c.hello(); err != nil {
 		return err
 	}
-	seq++
-	err := c.WriteHeader(seq, mrimCSPing, 0)
-	if err != nil {
-		return err
-	}
-	return c.Flush()
+	return c.Do(context.TODO(), mrimCSPing, nil)
 }
 
 func (c *Conn) SendMessage(to string, msg []byte, flags uint32) error {
 	if !c.helloAck {
 		return errors.New("no hello")
 	}
-	return c.sendMessage(42, to, msg, flags)
-}
 
-func (c *Conn) sendMessage(seq uint32, to string, message []byte, flags uint32) error {
-	log.Printf("send message: %d, %q, %q\n", seq, to, message)
+	log.Printf("doSend message: %q, %q\n", to, msg)
 
-	// 4 + len(str) for LPSSIZE(to)
-	// 4 + len(str) for LPSSIZE(message)
-	// 4 + len(" ") for LPSSIZE(msg_rtf)
-	// 4 for flags uint32
-	messageRTF := []byte{' '}
-	dlen := 4 + len(to) + 4 + len(message) + 4 + len(messageRTF) + 4 + 4
-	err := c.WriteHeader(seq, mrimCSMessage, uint32(dlen))
-	if err != nil {
-		return err
-	}
-	err = c.WriteData(flags, to, message, messageRTF)
-	if err != nil {
-		return err
-	}
-	return c.Flush()
-}
-
-func (c *Conn) readPacket() (msg uint32, body []byte, err error) {
-	var seq uint32
-	seq, msg, err = c.ReadHeader()
-	if err != nil {
-		return
-	}
-	body, err = c.ReadBody()
-	if err != nil {
-		return
-	}
-	log.Printf("received \"???\" packet: %d, %04x %q\n", seq, msg, body)
-	return
+	var data bytes.Buffer
+	writeData(&data, flags)
+	writeData(&data, to)
+	writeData(&data, msg)
+	writeData(&data, []byte{' '}) // message_rtf
+	return c.Do(context.TODO(), mrimCSMessage, data.Bytes())
 }
 
 type Reader struct {
 	R *bufio.Reader
 
-	dlen uint32
-	buf  []byte
+	buf []byte
 }
 
-func (p *Reader) ReadHeader() (seq, msg uint32, err error) {
-	err = readHeader(p.R, &seq, &msg, &p.dlen)
+func (b *Reader) ReadPacket() (p Packet, err error) {
+	err = readPacketHeader(b.R, &p)
 	if err != nil {
-		err = fmt.Errorf("cound not read header: %v", err)
+		return p, fmt.Errorf("cound not read packet header: %v", err)
 	}
-	return
-}
 
-func (p *Reader) ReadBody() ([]byte, error) {
-	n, err := p.R.Read(p.buf)
+	n, err := b.R.Read(b.buf)
 	if err != nil {
-		return nil, fmt.Errorf("cound not read body: %v", err)
+		return p, fmt.Errorf("cound not read packet body: %v", err)
 	}
-	if n < int(p.dlen) {
-		return nil, fmt.Errorf("read less that expected: read %d, want %d", n, p.dlen)
+	if n < int(p.Len) {
+		return p, fmt.Errorf("read less that expected: read %d, want %d", n, p.Len)
 	}
 	// TODO(varankinv): what those first n-dlen bytes for?
-	body := p.buf[n-int(p.dlen): n]
-	log.Printf("read body: %d bytes, dlen %d\n", n, p.dlen)
-	p.dlen = 0
-	return body, nil
-}
-
-func readHeader(r io.Reader, seq, msg, dlen *uint32) (err error) {
-	var magic, version uint32
-	err = binary.Read(r, binary.LittleEndian, &magic)
-	if err != nil {
-		return err
-	}
-	if magic != CSMagic {
-		return fmt.Errorf("wrong magic: %08x", magic)
-	}
-	err = binary.Read(r, binary.LittleEndian, &version)
-	if err != nil {
-		return err
-	}
-	//log.Printf("read head: version %d\n", version)
-	err = binary.Read(r, binary.LittleEndian, seq)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(r, binary.LittleEndian, msg)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(r, binary.LittleEndian, dlen)
-	if err != nil {
-		return err
-	}
-	return nil
+	p.Data = b.buf[n-int(p.Len): n]
+	log.Printf("received \"???\" packet: %d, %04x %d %q\n", p.Seq, p.Msg, p.Len, p.Data)
+	return
 }
 
 type Writer struct {
 	W *bufio.Writer
 }
 
-func (p *Writer) WriteHeader(seq, msg, dlen uint32) error {
-	return writeHeader(p.W, seq, msg, dlen)
+func (b *Writer) WritePacket(p Packet) error {
+	return writePacket(b.W, p)
 }
 
-func (p *Writer) WriteData(v ...interface{}) (err error) {
-	for _, v := range v {
-		err = packData(p.W, v)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+func (b *Writer) Flush() error {
+	log.Printf("writer flush: %d\n", b.W.Buffered())
+	return b.W.Flush()
 }
 
-func (p *Writer) Flush() error {
-	log.Printf("writer flush: %d\n", p.W.Buffered())
-	return p.W.Flush()
-}
-
-var headerReserved = make([]byte, 16) // not used, must be filled with zeroes
-
-func writeHeader(w io.Writer, seq, msg, dlen uint32) (err error) {
-	err = binary.Write(w, binary.LittleEndian, CSMagic)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(w, binary.LittleEndian, ProtoVersion)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(w, binary.LittleEndian, seq)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(w, binary.LittleEndian, msg)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(w, binary.LittleEndian, dlen)
-	if err != nil {
-		return err
-	}
-
-	var from, fromPort uint32 // not used, must be zero
-	err = binary.Write(w, binary.LittleEndian, from)
-	if err != nil {
-		return err
-	}
-	err = binary.Write(w, binary.LittleEndian, fromPort)
-	if err != nil {
-		return err
-	}
-
-	_, err = w.Write(headerReserved)
-	return err
-}
-
-func packData(w *bufio.Writer, v interface{}) error {
+func writeData(w io.Writer, v interface{}) error {
 	if v == nil {
 		return nil
 	}
@@ -351,7 +247,7 @@ func packData(w *bufio.Writer, v interface{}) error {
 		if err != nil {
 			return err
 		}
-		_, err = w.WriteString(v)
+		_, err = w.Write([]byte(v))
 		if err != nil {
 			return err
 		}
@@ -370,7 +266,7 @@ func packData(w *bufio.Writer, v interface{}) error {
 	return nil
 }
 
-// unpackLPS unpacks LSP (long pascal string, size uint32 + str string).
+// unpackLPS unpacks LSP (long pascal string, size uint32 + str string) from v.
 func unpackLPS(v []byte) (string, error) {
 	if v == nil {
 		return "", nil
