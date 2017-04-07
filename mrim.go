@@ -54,6 +54,10 @@ func (c *Conn) Hello() error {
 }
 
 func (c *Conn) hello(seq uint32) error {
+	if c.helloAck {
+		return nil
+	}
+
 	err := c.WriteHeader(seq, MrimCSHello, 0)
 	if err != nil {
 		return err
