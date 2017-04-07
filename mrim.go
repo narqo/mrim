@@ -281,6 +281,7 @@ func packData(w *bufio.Writer, v interface{}) error {
 	return nil
 }
 
+// unpackLPS unpacks LSP (long pascal string, size uint32 + str string).
 func unpackLPS(v []byte) (string, error) {
 	if v == nil {
 		return "", nil
