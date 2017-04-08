@@ -2,7 +2,6 @@ package mrim
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -211,7 +210,7 @@ func (c *Conn) send(ctx context.Context, p Packet) (err error) {
 func (c *Conn) hello() (err error) {
 	// send packet doing manual Flush, because flusher hasn't been started yet.
 	var p Packet
-	p.Header.Msg = mrimCSHello
+	p.Header.Msg = MsgCSHello
 
 	err = c.send(c.ctx, p)
 	if err != nil {
@@ -228,7 +227,7 @@ func (c *Conn) hello() (err error) {
 		return err
 	}
 
-	if p.Msg != mrimCSHelloAck {
+	if p.Msg != MsgCSHelloAck {
 		return PacketError{p, errUnknownPacket}
 	}
 
@@ -257,17 +256,16 @@ func (e AuthError) Error() string {
 
 // auth sends "MRIM_CS_LOGIN2" and reads the reply.
 func (c *Conn) auth(username, password string, status uint32, clientDesc string) error {
-	// FIXME: pack data into []byte
-	var data bytes.Buffer
-	writeData(&data, username)
-	writeData(&data, password)
-	writeData(&data, status)
-	writeData(&data, clientDesc)
+	pw := &packetWriter{}
+	pw.WriteData(username)
+	pw.WriteData(password)
+	pw.WriteData(status)
+	pw.WriteData(clientDesc)
 	for i := 0; i < 5; i++ {
-		writeData(&data, uint32(0)) // internal fields
+		pw.WriteData(0) // internal fields
 	}
 
-	err := c.Do(c.ctx, mrimCSLogin2, data.Bytes())
+	err := c.send(c.ctx, pw.Packet(MsgCSLogin2))
 	if err != nil {
 		return err
 	}
@@ -284,10 +282,10 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 	}
 
 	switch p.Msg {
-	case mrimCSLoginAck:
+	case MsgCSLoginAck:
 		log.Printf("received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", p.Seq, p.Msg)
 
-	case mrimCSLoginRej:
+	case MsgCSLoginRej:
 		reason, err := unpackLPS(p.Data)
 		if err != nil {
 			return fmt.Errorf("mrim: cound not read auth rejection reason: %v", err)
@@ -312,7 +310,7 @@ func (c *Conn) ping(d time.Duration) {
 
 	// NOTE: there is such thing as pong.
 	var p Packet
-	p.Header.Msg = mrimCSPing
+	p.Header.Msg = MsgCSPing
 	c.Send(c.ctx, p)
 
 	c.pingTimer.Reset(d)
@@ -335,14 +333,14 @@ func (c *Conn) readLoop() {
 
 		// packets which (mostly all) are not replies
 		switch p.Header.Msg {
-		case mrimCSUserInfo:
+		case MsgCSUserInfo:
 			debugf("received \"MRIM_CS_USER_INFO\" packet: %04x", p.Msg)
 
-		case mrimCSOfflineMessageAck:
+		case MrimCSOfflineMessageAck:
 			// TODO(varankinv): send MRIM_CS_DELETE_OFFLINE_MESSAGE for each offline message.
 			debugf("received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %04x", p.Msg)
 
-		case mrimCSContactList2:
+		case MsgCSContactList2:
 			debugf("received \"MRIM_CS_CONTACT_LIST2\" packet: %04x", p.Msg)
 		}
 	}
@@ -434,42 +432,6 @@ func (r *Reader) ReadPacket() (p Packet, err error) {
 	p.Data = r.buf[n-int(p.Len): n]
 	debugf("< received \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
 	return
-}
-
-func writeData(w io.Writer, v interface{}) error {
-	if v == nil {
-		return nil
-	}
-
-	switch v := v.(type) {
-	case int:
-		return binary.Write(w, binary.LittleEndian, uint32(v))
-	case uint:
-		return binary.Write(w, binary.LittleEndian, uint32(v))
-	case uint32:
-		return binary.Write(w, binary.LittleEndian, v)
-	case string:
-		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
-		if err != nil {
-			return err
-		}
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return err
-		}
-	case []byte:
-		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
-		if err != nil {
-			return err
-		}
-		_, err = w.Write(v)
-		if err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported type %T", v)
-	}
-	return nil
 }
 
 type Writer struct {

@@ -11,32 +11,32 @@ const (
 )
 
 const (
-	mrimCSHello                = 0x1001
-	mrimCSHelloAck             = 0x1002
-	mrimCSLoginAck             = 0x1004
-	mrimCSLoginRej             = 0x1005
-	mrimCSPing                 = 0x1006
-	mrimCSMessage              = 0x1008
-	mrimCSMessageAck           = 0x1009
-	mrimCSUserStatus           = 0x100F
-	mrimCSMessageRecv          = 0x1011
-	mrimCSMessageStatus        = 0x1012
-	mrimCSLogout               = 0x1013
-	mrimCSConnectionParams     = 0x1014
-	mrimCSUserInfo             = 0x1015
-	mrimCSAddContact           = 0x1019
-	mrimCSAddContactAck        = 0x101A
-	mrimCSModifyContact        = 0x101B
-	mrimCSModifyContactAck     = 0x101C
-	mrimCSOfflineMessageAck    = 0x101D
-	mrimCSDeleteOfflineMessage = 0x101E
-	mrimCSGetMpopSession       = 0x1024
-	mrimCSMpopSession          = 0x1025
-	mrimCSAnketaInfo           = 0x1028
-	mrimCSWPRequest            = 0x1029
-	mrimCSMailboxStatus        = 0x1033
-	mrimCSContactList2         = 0x1037
-	mrimCSLogin2               = 0x1038
+	MsgCSHello                 = 0x1001
+	MsgCSHelloAck              = 0x1002
+	MsgCSLoginAck              = 0x1004
+	MsgCSLoginRej              = 0x1005
+	MsgCSPing                  = 0x1006
+	MsgCSMessage              = 0x1008
+	MsgCSMessageAck           = 0x1009
+	MsgCSUserStatus           = 0x100F
+	MsgCSMessageRecv          = 0x1011
+	MsgCSMessageStatus        = 0x1012
+	MsgCSLogout               = 0x1013
+	MsgCSConnectionParams     = 0x1014
+	MsgCSUserInfo              = 0x1015
+	MsgCSAddContact           = 0x1019
+	MsgCSAddContactAck        = 0x101A
+	MsgCSModifyContact        = 0x101B
+	MsgCSModifyContactAck     = 0x101C
+	MrimCSOfflineMessageAck    = 0x101D
+	MsgCSDeleteOfflineMessage = 0x101E
+	MsgCSGetMpopSession       = 0x1024
+	MsgCSMpopSession          = 0x1025
+	MsgCSAnketaInfo           = 0x1028
+	MsgCSWPRequest            = 0x1029
+	MsgCSMailboxStatus        = 0x1033
+	MsgCSContactList2          = 0x1037
+	MsgCSLogin2                = 0x1038
 )
 
 const (
