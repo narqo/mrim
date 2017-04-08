@@ -1,6 +1,7 @@
 package mrim
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -27,6 +28,61 @@ type Header struct {
 type Packet struct {
 	Header
 	Data []byte
+}
+
+type packetWriter struct {
+	b bytes.Buffer
+}
+
+func (w *packetWriter) Write(p []byte) (int, error) {
+	return w.b.Write(p)
+}
+
+func (w *packetWriter) WriteData(v interface{}) (int, error) {
+	return 0, writeData(&w.b, v)
+}
+
+func (w *packetWriter) Packet(msg uint32) (p Packet) {
+	p.Data = w.b.Bytes()
+	p.Header.Len = uint32(len(p.Data))
+	p.Header.Msg = msg
+	return
+}
+
+func writeData(w io.Writer, v interface{}) error {
+	if v == nil {
+		return nil
+	}
+
+	switch v := v.(type) {
+	case int:
+		return binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint:
+		return binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint32:
+		return binary.Write(w, binary.LittleEndian, v)
+	case string:
+		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return err
+		}
+		_, err = w.Write([]byte(v))
+		if err != nil {
+			return err
+		}
+	case []byte:
+		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(v)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported type %T", v)
+	}
+	return nil
 }
 
 var headerReserved [16]byte // not used, must be filled with zeroes
