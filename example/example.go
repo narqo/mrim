@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -42,15 +43,11 @@ func main() {
 
 	mrconn.Run(*username, *password, mrim.StatusOnline, versionTxt)
 
-	sendMsg(ctx, mrconn, "hello!")
-	<-time.After(3 * time.Second)
-	sendMsg(ctx, mrconn, "hey! busy?")
-	<-time.After(3 * time.Second)
-	sendMsg(ctx, mrconn, "sorry, me again")
+	time.Sleep(5 * time.Second)
 
-	<-time.After(45 * time.Second)
+	spamChat(ctx, mrconn, recipient)
 
-	sendMsg(ctx, mrconn, "human! you're ignoring me!!111")
+	log.Println("exiting...")
 }
 
 func initLoginAddr(hostPort string) (net.Addr, error) {
@@ -88,14 +85,26 @@ func initLoginAddr(hostPort string) (net.Addr, error) {
 	return loginAddr, nil
 }
 
-func sendMsg(ctx context.Context, conn *mrim.Conn, msg string) error {
+func spamChat(ctx context.Context, conn *mrim.Conn, to string) (err error) {
+	for i := 0; i < 10; i++ {
+		err = sendMsg(ctx, conn, to, fmt.Sprintf("test message %d", i))
+		if err != nil {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	log.Printf("spam chat done: %v\n", err)
+	return
+}
+
+func sendMsg(ctx context.Context, conn *mrim.Conn, to, msg string) error {
 	msgRTF := []byte{' '}
 
 	var p mrim.PacketWriter
 	p.WriteData(mrim.MessageFlagNorecv) // flags
-	p.WriteData(recipient)   // to
-	p.WriteData(msg)         // message
-	p.WriteData(msgRTF)      // rtf message
+	p.WriteData(to)                     // to
+	p.WriteData(msg)                    // message
+	p.WriteData(msgRTF)                 // rtf message
 
 	err := conn.Send(ctx, p.Packet(mrim.MsgCSMessage))
 	if err != nil {
