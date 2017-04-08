@@ -16,6 +16,7 @@ import (
 
 const (
 	mraBufSize = 32768
+	flushChanSize = 1024
 
 	DefaultTimeout = 25 * time.Second
 )
@@ -94,7 +95,7 @@ func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 	c := &Conn{
 		ctx:     ctx,
 		conn:    conn,
-		fch:     make(chan struct{}),
+		fch:     make(chan struct{}, flushChanSize),
 		stopper: make(chan struct{}),
 	}
 	c.Writer = Writer{
@@ -109,11 +110,12 @@ func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 
 func (c *Conn) Run(username, password string, status uint32, clientDesc string) {
 	c.once.Do(func() {
-		c.mu.Lock()
 		err := c.setupConnection(username, password, status, clientDesc)
 		if err != nil {
 			c.fatal(err)
 		}
+
+		c.mu.Lock()
 		c.run()
 		c.mu.Unlock()
 	})
@@ -213,6 +215,9 @@ func (c *Conn) hello() (err error) {
 	if p.Msg != mrimCSHelloAck {
 		return PacketError{p, errUnknownPacket}
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	c.helloAck = true
 
