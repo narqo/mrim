@@ -96,17 +96,16 @@ func (c *Conn) run() {
 		c.fatal(errNoHello)
 	}
 
-	c.wg.Add(1)
-
-	go c.readLoop(&c.wg)
+	go c.readLoop()
 
 	if c.pingInterval > 0 {
+		pingInterval := c.pingInterval
 		if c.pingTimer == nil {
 			c.pingTimer = time.AfterFunc(c.pingInterval, func() {
-				c.ping(c.pingInterval)
+				c.ping(pingInterval)
 			})
 		} else {
-			c.pingTimer.Reset(c.pingInterval)
+			c.pingTimer.Reset(pingInterval)
 		}
 	}
 }
@@ -284,8 +283,9 @@ func (c *Conn) ping(d time.Duration) {
 }
 
 // readLoop is run in a goroutine, reading incoming packets.
-func (c *Conn) readLoop(wg *sync.WaitGroup) {
-	defer wg.Done()
+func (c *Conn) readLoop() {
+	c.wg.Add(1)
+	defer c.wg.Done()
 
 	var stopped bool
 
@@ -341,11 +341,11 @@ func (r *Reader) ReadPacket() (p Packet, err error) {
 		return p, fmt.Errorf("mrim: cound not read packet body: %v", err)
 	}
 	if n < int(p.Len) {
-		return p, fmt.Errorf("read less that expected: read %d, want %d", n, p.Len)
+		return p, fmt.Errorf("mrim: read less that expected: read %d, want %d", n, p.Len)
 	}
 	// TODO(varankinv): what those first n-len bytes for?
 	p.Data = r.buf[n-int(p.Len): n]
-	debugf("< received \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
+	debugf("< received \"???\" packet: %d, %04x %d (%d) %v", p.Seq, p.Msg, p.Len, n, p.Data)
 	return
 }
 
@@ -359,7 +359,7 @@ func (w *Writer) WritePacket(p Packet) error {
 }
 
 func (w *Writer) Flush() error {
-	debugf("> flush: %d", w.bw.Buffered())
+	debugf("> flush: %d %d", w.bw.Buffered(), w.bw.Available())
 	return w.bw.Flush()
 }
 
