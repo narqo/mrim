@@ -14,15 +14,13 @@ import (
 )
 
 const (
-	mraBufSize    = 32768
-	flushChanSize = 1024
+	mraBufSize = 32768
 
-	DefaultTimeout = 25 * time.Second
+	DefaultTimeout = 15 * time.Minute
 )
 
 var (
 	errNoHello       = errors.New("no hello")
-	errPacketDropped = errors.New("packet droped")
 	errUnknownPacket = errors.New("unknown packet")
 )
 
@@ -34,33 +32,9 @@ func Dial(ctx context.Context, addr string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tconn, ok := nconn.(*net.TCPConn); ok {
-		err := tconn.SetKeepAlive(true)
-		if err != nil {
-			nconn.Close()
-			return nil, err
-		}
-	}
 	conn := NewConn(ctx, nconn)
 	return conn, nil
 }
-
-/*
-func connectLoginAddr(ctx context.Context, loginAddr net.Addr) error {
-	dialer := &net.Dialer{
-		Timeout: DefaultTimeout,
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", loginAddr.String())
-	if err != nil {
-		return err
-	}
-
-	c := NewConn(ctx, conn)
-	c.Run()
-
-	return nil
-}
-*/
 
 type Conn struct {
 	Reader
@@ -77,11 +51,6 @@ type Conn struct {
 	once sync.Once
 	wg   sync.WaitGroup
 
-	// flusher internal channel
-	fch chan struct{}
-	// stopper used to stop flusher
-	stopper chan struct{}
-
 	stopped bool
 	// helloAck becomes true after MRIM_CS_HELLO_ACK retrived.
 	helloAck bool
@@ -96,10 +65,8 @@ type Conn struct {
 
 func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 	c := &Conn{
-		ctx:     ctx,
-		conn:    conn,
-		fch:     make(chan struct{}, flushChanSize),
-		stopper: make(chan struct{}),
+		ctx:  ctx,
+		conn: conn,
 	}
 	c.Writer = Writer{
 		bw: bufio.NewWriter(c.conn),
@@ -129,10 +96,9 @@ func (c *Conn) run() {
 		c.fatal(errNoHello)
 	}
 
-	c.wg.Add(2) // we spawn 2 goroutines
+	c.wg.Add(1)
 
 	go c.readLoop(&c.wg)
-	go c.flusher(&c.wg)
 
 	if c.pingInterval > 0 {
 		if c.pingTimer == nil {
@@ -161,8 +127,16 @@ func (c *Conn) setupConnection(username, password string, status uint32, clientD
 
 // FIXME(varankinv): Conn.Close
 func (c *Conn) Close() error {
+	c.mu.Lock()
+	if !c.stopped {
+		c.stopped = true
+	}
+	c.mu.Unlock()
+
 	err := c.conn.Close()
+
 	c.wg.Wait()
+
 	return err
 }
 
@@ -179,7 +153,7 @@ func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
 	p.Len = uint32(len(data))
 	p.Data = data
 
-	err := c.sendFlush(ctx, p)
+	err := c.send(ctx, p)
 
 	// TODO: release sequence
 
@@ -187,16 +161,7 @@ func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
 }
 
 func (c *Conn) Send(ctx context.Context, p Packet) error {
-	return c.sendFlush(ctx, p)
-}
-
-func (c *Conn) sendFlush(ctx context.Context, p Packet) (err error) {
-	err = c.send(ctx, p)
-	if err != nil {
-		return
-	}
-	c.kickFlusher()
-	return
+	return c.send(ctx, p)
 }
 
 func (c *Conn) send(ctx context.Context, p Packet) (err error) {
@@ -211,22 +176,19 @@ func (c *Conn) send(ctx context.Context, p Packet) (err error) {
 	}
 
 	if err != nil {
-		debugf("%v", PacketError{p, errPacketDropped})
+		debug(PacketError{p, fmt.Errorf("packet droped: %v", err)})
+	} else {
+		return c.Flush()
 	}
 	return
 }
 
 // hello sends "MRIM_CS_HELLO" message and reads the reply.
 func (c *Conn) hello() (err error) {
-	// send packet doing manual Flush, because flusher hasn't been started yet.
 	var p Packet
 	p.Header.Msg = MsgCSHello
 
 	err = c.send(c.ctx, p)
-	if err != nil {
-		return err
-	}
-	err = c.Flush()
 	if err != nil {
 		return err
 	}
@@ -247,7 +209,7 @@ func (c *Conn) hello() (err error) {
 	c.helloAck = true
 
 	pingInterval := binary.LittleEndian.Uint32(p.Data)
-	log.Printf("received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", p.Seq, p.Msg, pingInterval)
+	log.Printf("> received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", p.Seq, p.Msg, pingInterval)
 
 	if pingInterval > 0 {
 		c.pingInterval = time.Duration(pingInterval) * time.Second
@@ -279,11 +241,6 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 	if err != nil {
 		return err
 	}
-	// flush manually because flusher hasn't been started yet
-	err = c.Flush()
-	if err != nil {
-		return err
-	}
 
 	// read reply here because readLoop hasn't been started yet.
 	p, err := c.ReadPacket()
@@ -293,14 +250,14 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 
 	switch p.Msg {
 	case MsgCSLoginAck:
-		log.Printf("received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", p.Seq, p.Msg)
+		log.Printf("> received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", p.Seq, p.Msg)
 
 	case MsgCSLoginRej:
 		reason, err := unpackLPS(p.Data)
 		if err != nil {
 			return fmt.Errorf("mrim: cound not read auth rejection reason: %v", err)
 		}
-		log.Printf("received \"MRIM_CS_LOGIN_REJ\" packet: %d, %04x, reason %q\n", p.Seq, p.Msg, reason)
+		log.Printf("> received \"MRIM_CS_LOGIN_REJ\" packet: %d, %04x, reason %q\n", p.Seq, p.Msg, reason)
 		return AuthError{reason}
 
 	default:
@@ -311,12 +268,12 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 }
 
 func (c *Conn) ping(d time.Duration) {
-	c.mu.Lock()
+	c.mu.RLock()
 	if !c.helloAck {
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return
 	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	// NOTE: there is such thing as pong.
 	var p Packet
@@ -346,81 +303,25 @@ func (c *Conn) readLoop(wg *sync.WaitGroup) {
 		// packets which (mostly all) are not replies
 		switch p.Header.Msg {
 		case MsgCSUserInfo:
-			debugf("received \"MRIM_CS_USER_INFO\" packet: %04x", p.Msg)
+			debugf("> received \"MRIM_CS_USER_INFO\" packet: %04x", p.Msg)
 
 		case MrimCSOfflineMessageAck:
 			// TODO(varankinv): send MRIM_CS_DELETE_OFFLINE_MESSAGE for each offline message.
-			debugf("received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %04x", p.Msg)
+			debugf("> received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %04x", p.Msg)
 
 		case MsgCSContactList2:
-			debugf("received \"MRIM_CS_CONTACT_LIST2\" packet: %04x", p.Msg)
+			debugf("> received \"MRIM_CS_CONTACT_LIST2\" packet: %04x", p.Msg)
 		}
 	}
-}
-
-// flusher is run in a goroutine, processing flush requests for the Writer.
-func (c *Conn) flusher(wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	c.mu.RLock()
-	w := c.Writer
-	helloAck := c.helloAck
-	c.mu.RUnlock()
-
-	if !helloAck {
-		debugf("flush without hello")
-		return
-	}
-
-	var stopped bool
-
-	for !stopped {
-		select {
-		case <-c.fch:
-			c.mu.RLock()
-			if w.bw.Buffered() > 0 {
-				c.mu.RUnlock()
-
-				err := w.Flush()
-				if err != nil {
-					debugf("failed to flush writter")
-				}
-				break
-			}
-			c.mu.RUnlock()
-
-		case <-c.stopper:
-			stopped = true
-		}
-	}
-}
-
-// kickFlusher send a signal to fch to trigger packets flush in the flusher.
-func (c *Conn) kickFlusher() {
-	if c.bw != nil {
-		select {
-		case c.fch <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (c *Conn) stopFlusher() {
-	c.mu.Lock()
-	if !c.stopped {
-		c.stopped = true
-		close(c.stopper)
-	}
-	c.mu.Unlock()
 }
 
 func (c *Conn) fatal(err error) {
-	c.mu.Lock()
 	debugf("fatal: %v", err)
+
+	c.mu.Lock()
 	c.err = err
 	c.mu.Unlock()
 
-	c.stopFlusher()
 	c.Close()
 }
 
