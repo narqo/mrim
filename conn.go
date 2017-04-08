@@ -23,6 +23,7 @@ const (
 
 var (
 	errNoHello = errors.New("no hello")
+	errPacketDropped = errors.New("packet droped")
 	errUnknownPacket = errors.New("unknown packet")
 )
 
@@ -169,12 +170,27 @@ func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
 	p.Len = uint32(len(data))
 	p.Data = data
 
-	err := c.doSend(ctx, p)
+	err := c.sendFlush(ctx, p)
+
 	// TODO: release sequence
+
 	return err
 }
 
-func (c *Conn) doSend(ctx context.Context, p Packet) (err error) {
+func (c *Conn) Send(ctx context.Context, p Packet) error {
+	return c.sendFlush(ctx, p)
+}
+
+func (c *Conn) sendFlush(ctx context.Context, p Packet) (err error) {
+	err = c.send(ctx, p)
+	if err != nil {
+		return
+	}
+	c.kickFlusher()
+	return
+}
+
+func (c *Conn) send(ctx context.Context, p Packet) (err error) {
 	c.mu.RLock()
 	stopped := c.stopped
 	c.mu.RUnlock()
@@ -186,18 +202,18 @@ func (c *Conn) doSend(ctx context.Context, p Packet) (err error) {
 	}
 
 	if err != nil {
-		debugf("%v", PacketError{p, errors.New("packet droped")})
-		return
+		debugf("%v", PacketError{p, errPacketDropped})
 	}
 	return
 }
 
+// hello sends "MRIM_CS_HELLO" message and reads the reply.
 func (c *Conn) hello() (err error) {
-	// send packet manually because flusher hasn't been started yet.
+	// send packet doing manual Flush, because flusher hasn't been started yet.
 	var p Packet
 	p.Header.Msg = mrimCSHello
 
-	err = c.doSend(c.ctx, p)
+	err = c.send(c.ctx, p)
 	if err != nil {
 		return err
 	}
@@ -239,7 +255,7 @@ func (e AuthError) Error() string {
 	return e.s
 }
 
-// auth sends MRIM_CS_LOGIN2
+// auth sends "MRIM_CS_LOGIN2" and reads the reply.
 func (c *Conn) auth(username, password string, status uint32, clientDesc string) error {
 	// FIXME: pack data into []byte
 	var data bytes.Buffer
@@ -280,7 +296,7 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 		return AuthError{reason}
 
 	default:
-		return fmt.Errorf("unknown packet received: %04x", p.Msg)
+		return PacketError{p, errUnknownPacket}
 	}
 
 	return nil
@@ -295,7 +311,10 @@ func (c *Conn) ping(d time.Duration) {
 	c.mu.Unlock()
 
 	// NOTE: there is such thing as pong.
-	c.Do(c.ctx, mrimCSPing, nil)
+	var p Packet
+	p.Header.Msg = mrimCSPing
+	c.Send(c.ctx, p)
+
 	c.pingTimer.Reset(d)
 }
 
@@ -346,10 +365,17 @@ func (c *Conn) flusher() {
 	for !stopped {
 		select {
 		case <-c.fch:
-			err := w.Flush()
-			if err != nil {
-				debugf("failed to flush writter")
+			c.mu.RLock()
+			if w.bw.Buffered() > 0 {
+				c.mu.RUnlock()
+
+				err := w.Flush()
+				if err != nil {
+					debugf("failed to flush writter")
+				}
+				break
 			}
+			c.mu.RUnlock()
 
 		case <-c.stopper:
 			stopped = true
@@ -394,19 +420,19 @@ type Reader struct {
 func (r *Reader) ReadPacket() (p Packet, err error) {
 	err = readPacketHeader(r.br, &p)
 	if err != nil {
-		return p, fmt.Errorf("cound not read packet header: %v", err)
+		return p, fmt.Errorf("mrim: cound not read packet header: %v", err)
 	}
 
 	n, err := r.br.Read(r.buf)
 	if err != nil {
-		return p, fmt.Errorf("cound not read packet body: %v", err)
+		return p, fmt.Errorf("mrim: cound not read packet body: %v", err)
 	}
 	if n < int(p.Len) {
 		return p, fmt.Errorf("read less that expected: read %d, want %d", n, p.Len)
 	}
 	// TODO(varankinv): what those first n-len bytes for?
 	p.Data = r.buf[n-int(p.Len): n]
-	debugf("received \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
+	debugf("< received \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
 	return
 }
 
@@ -451,11 +477,11 @@ type Writer struct {
 }
 
 func (w *Writer) WritePacket(p Packet) error {
+	debugf("> sent \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
 	return writePacket(w.bw, p)
 }
 
 func (w *Writer) Flush() error {
-	debugf("writer flush: %d", w.bw.Buffered())
 	return w.bw.Flush()
 }
 
