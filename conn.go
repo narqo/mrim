@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	mraBufSize = 32768
+	mraBufSize    = 32768
 	flushChanSize = 1024
 
 	DefaultTimeout = 25 * time.Second
 )
 
 var (
-	errNoHello = errors.New("no hello")
+	errNoHello       = errors.New("no hello")
 	errPacketDropped = errors.New("packet droped")
 	errUnknownPacket = errors.New("unknown packet")
 )
@@ -75,7 +75,7 @@ type Conn struct {
 
 	mu   sync.RWMutex
 	once sync.Once
-	wg   *sync.WaitGroup
+	wg   sync.WaitGroup
 
 	// flusher internal channel
 	fch chan struct{}
@@ -85,6 +85,9 @@ type Conn struct {
 	stopped bool
 	// helloAck becomes true after MRIM_CS_HELLO_ACK retrived.
 	helloAck bool
+
+	// TODO
+	seq uint32
 
 	// ping interval retrieved with MRIM_CS_HELLO_ACK.
 	pingInterval time.Duration
@@ -126,8 +129,10 @@ func (c *Conn) run() {
 		c.fatal(errNoHello)
 	}
 
-	go c.readLoop()
-	go c.flusher()
+	c.wg.Add(2) // we spawn 2 goroutines
+
+	go c.readLoop(&c.wg)
+	go c.flusher(&c.wg)
 
 	if c.pingInterval > 0 {
 		if c.pingTimer == nil {
@@ -156,12 +161,17 @@ func (c *Conn) setupConnection(username, password string, status uint32, clientD
 
 // FIXME(varankinv): Conn.Close
 func (c *Conn) Close() error {
-	return c.conn.Close()
+	err := c.conn.Close()
+	c.wg.Wait()
+	return err
 }
 
 func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
 	// TODO: acquire sequence
-	seq := uint32(0)
+	c.mu.Lock()
+	seq := c.seq
+	c.seq++
+	c.mu.Unlock()
 
 	var p Packet
 	p.Seq = seq
@@ -255,8 +265,8 @@ func (e AuthError) Error() string {
 }
 
 // auth sends "MRIM_CS_LOGIN2" and reads the reply.
-func (c *Conn) auth(username, password string, status uint32, clientDesc string) error {
-	pw := &packetWriter{}
+func (c *Conn) auth(username, password string, status uint32, clientDesc string) (err error) {
+	pw := PacketWriter{}
 	pw.WriteData(username)
 	pw.WriteData(password)
 	pw.WriteData(status)
@@ -265,7 +275,7 @@ func (c *Conn) auth(username, password string, status uint32, clientDesc string)
 		pw.WriteData(0) // internal fields
 	}
 
-	err := c.send(c.ctx, pw.Packet(MsgCSLogin2))
+	err = c.send(c.ctx, pw.Packet(MsgCSLogin2))
 	if err != nil {
 		return err
 	}
@@ -317,7 +327,9 @@ func (c *Conn) ping(d time.Duration) {
 }
 
 // readLoop is run in a goroutine, reading incoming packets.
-func (c *Conn) readLoop() {
+func (c *Conn) readLoop(wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	var stopped bool
 
 	for !stopped {
@@ -347,7 +359,9 @@ func (c *Conn) readLoop() {
 }
 
 // flusher is run in a goroutine, processing flush requests for the Writer.
-func (c *Conn) flusher() {
+func (c *Conn) flusher(wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	c.mu.RLock()
 	w := c.Writer
 	helloAck := c.helloAck
@@ -444,6 +458,7 @@ func (w *Writer) WritePacket(p Packet) error {
 }
 
 func (w *Writer) Flush() error {
+	debugf("> flush: %d", w.bw.Buffered())
 	return w.bw.Flush()
 }
 

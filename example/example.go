@@ -42,8 +42,15 @@ func main() {
 
 	mrconn.Run(*username, *password, mrim.StatusOnline, versionTxt)
 
+	sendMsg(ctx, mrconn, "hello!")
+	<-time.After(3 * time.Second)
+	sendMsg(ctx, mrconn, "hey! busy?")
+	<-time.After(3 * time.Second)
+	sendMsg(ctx, mrconn, "sorry, me again")
+
 	<-time.After(45 * time.Second)
-	//sendMsg(mrconn, "hello!")
+
+	sendMsg(ctx, mrconn, "human! you're ignoring me!!111")
 }
 
 func initLoginAddr(hostPort string) (net.Addr, error) {
@@ -81,10 +88,18 @@ func initLoginAddr(hostPort string) (net.Addr, error) {
 	return loginAddr, nil
 }
 
-//func sendMsg(conn *mrim.Conn, msg string) error {
-//	err := conn.SendMessage(recipient, []byte(msg), mrim.MessageFlagNorecv)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	return nil
-//}
+func sendMsg(ctx context.Context, conn *mrim.Conn, msg string) error {
+	msgRTF := []byte{' '}
+
+	var p mrim.PacketWriter
+	p.WriteData(mrim.MessageFlagNorecv) // flags
+	p.WriteData(recipient)   // to
+	p.WriteData(msg)         // message
+	p.WriteData(msgRTF)      // rtf message
+
+	err := conn.Send(ctx, p.Packet(mrim.MsgCSMessage))
+	if err != nil {
+		log.Fatal(err)
+	}
+	return nil
+}

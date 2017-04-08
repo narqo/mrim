@@ -11,11 +11,11 @@ const (
 )
 
 const (
-	MsgCSHello                 = 0x1001
-	MsgCSHelloAck              = 0x1002
-	MsgCSLoginAck              = 0x1004
-	MsgCSLoginRej              = 0x1005
-	MsgCSPing                  = 0x1006
+	MsgCSHello                = 0x1001
+	MsgCSHelloAck             = 0x1002
+	MsgCSLoginAck             = 0x1004
+	MsgCSLoginRej             = 0x1005
+	MsgCSPing                 = 0x1006
 	MsgCSMessage              = 0x1008
 	MsgCSMessageAck           = 0x1009
 	MsgCSUserStatus           = 0x100F
@@ -23,20 +23,20 @@ const (
 	MsgCSMessageStatus        = 0x1012
 	MsgCSLogout               = 0x1013
 	MsgCSConnectionParams     = 0x1014
-	MsgCSUserInfo              = 0x1015
+	MsgCSUserInfo             = 0x1015
 	MsgCSAddContact           = 0x1019
 	MsgCSAddContactAck        = 0x101A
 	MsgCSModifyContact        = 0x101B
 	MsgCSModifyContactAck     = 0x101C
-	MrimCSOfflineMessageAck    = 0x101D
+	MrimCSOfflineMessageAck   = 0x101D
 	MsgCSDeleteOfflineMessage = 0x101E
 	MsgCSGetMpopSession       = 0x1024
 	MsgCSMpopSession          = 0x1025
 	MsgCSAnketaInfo           = 0x1028
 	MsgCSWPRequest            = 0x1029
 	MsgCSMailboxStatus        = 0x1033
-	MsgCSContactList2          = 0x1037
-	MsgCSLogin2                = 0x1038
+	MsgCSContactList2         = 0x1037
+	MsgCSLogin2               = 0x1038
 )
 
 const (

@@ -30,61 +30,6 @@ type Packet struct {
 	Data []byte
 }
 
-type packetWriter struct {
-	b bytes.Buffer
-}
-
-func (w *packetWriter) Write(p []byte) (int, error) {
-	return w.b.Write(p)
-}
-
-func (w *packetWriter) WriteData(v interface{}) (int, error) {
-	return 0, writeData(&w.b, v)
-}
-
-func (w *packetWriter) Packet(msg uint32) (p Packet) {
-	p.Data = w.b.Bytes()
-	p.Header.Len = uint32(len(p.Data))
-	p.Header.Msg = msg
-	return
-}
-
-func writeData(w io.Writer, v interface{}) error {
-	if v == nil {
-		return nil
-	}
-
-	switch v := v.(type) {
-	case int:
-		return binary.Write(w, binary.LittleEndian, uint32(v))
-	case uint:
-		return binary.Write(w, binary.LittleEndian, uint32(v))
-	case uint32:
-		return binary.Write(w, binary.LittleEndian, v)
-	case string:
-		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
-		if err != nil {
-			return err
-		}
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return err
-		}
-	case []byte:
-		err := binary.Write(w, binary.LittleEndian, uint32(len(v)))
-		if err != nil {
-			return err
-		}
-		_, err = w.Write(v)
-		if err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported type %T", v)
-	}
-	return nil
-}
-
 var headerReserved [16]byte // not used, must be filled with zeroes
 
 func writePacket(w io.Writer, p Packet) (err error) {
@@ -159,4 +104,51 @@ func readPacketHeader(r io.Reader, p *Packet) (err error) {
 		return err
 	}
 	return nil
+}
+
+type PacketWriter struct {
+	b bytes.Buffer
+}
+
+func (w *PacketWriter) Write(p []byte) (int, error) {
+	return w.b.Write(p)
+}
+
+func (w *PacketWriter) WriteData(v interface{}) (n int, err error) {
+	if v == nil {
+		return
+	}
+
+	switch v := v.(type) {
+	case int:
+		err = binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint:
+		err = binary.Write(w, binary.LittleEndian, uint32(v))
+	case uint32:
+		err = binary.Write(w, binary.LittleEndian, v)
+	case string:
+		err = binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return
+		}
+		n, err = w.Write([]byte(v))
+		n += 4
+	case []byte:
+		err = binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return
+		}
+		n, err = w.Write(v)
+		n += 4
+	default:
+		err = fmt.Errorf("unsupported type %T", v)
+	}
+	return
+}
+
+func (w *PacketWriter) Packet(msg uint32) (p Packet) {
+	p.Data = w.b.Bytes()
+	p.Header.Len = uint32(len(p.Data))
+	p.Header.Msg = msg
+	return
 }
