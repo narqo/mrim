@@ -33,7 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("login host port: %s %d\n", loginAddr.IP, loginAddr.Port)
 
 	mrconn, err := mrim.Dial(ctx, loginAddr.String())
 	if err != nil {
@@ -41,24 +40,13 @@ func main() {
 	}
 	defer mrconn.Close()
 
-	pingInterval, err := mrconn.Hello()
-	if err != nil {
-		log.Fatal(err)
-	}
+	mrconn.Run(*username, *password, mrim.StatusOnline, versionTxt)
 
-	if pingInterval > 0 {
-		go doPing(mrconn, pingInterval)
-	}
-
-	err = mrconn.Auth(*username, *password, mrim.StatusOnline, versionTxt)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sendMsg(mrconn, "hello!")
+	<-time.After(45 * time.Second)
+	//sendMsg(mrconn, "hello!")
 }
 
-func initLoginAddr(hostPort string) (*net.TCPAddr, error) {
+func initLoginAddr(hostPort string) (net.Addr, error) {
 	addr, err := net.ResolveTCPAddr("tcp", hostPort)
 	if err != nil {
 		return nil, err
@@ -89,28 +77,14 @@ func initLoginAddr(hostPort string) (*net.TCPAddr, error) {
 		IP:   ip,
 		Port: int(port),
 	}
+	log.Printf("login host port: %s %d\n", loginAddr.IP, loginAddr.Port)
 	return loginAddr, nil
 }
 
-func sendMsg(conn *mrim.Conn, msg string) error {
-	err := conn.SendMessage(recipient, []byte(msg), mrim.MessageFlagNorecv)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return nil
-}
-
-// TODO: use time.AfterFunc instead of for-loop
-func doPing(conn *mrim.Conn, interval uint32) {
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
-	for {
-		select {
-		case <-ticker.C:
-			log.Println("ping")
-			err := conn.Ping()
-			if err != nil {
-				log.Printf("ping error: %v\n", err)
-			}
-		}
-	}
-}
+//func sendMsg(conn *mrim.Conn, msg string) error {
+//	err := conn.SendMessage(recipient, []byte(msg), mrim.MessageFlagNorecv)
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	return nil
+//}

@@ -1,4 +1,6 @@
-package mrim
+// +build ignore
+
+package example
 
 import (
 	"bufio"
@@ -55,18 +57,9 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
-	// TODO: acquire sequence
-	var seq uint32
 
-	var p Packet
-	p.Seq = seq
-	p.Msg = msg
-	p.Len = uint32(len(data))
-	p.Data = data
 
-	err := c.doSend(ctx, p)
-	// TODO: release sequence
-	return err
+
 }
 
 func (c *Conn) doSend(ctx context.Context, p Packet) error {

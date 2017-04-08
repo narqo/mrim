@@ -6,6 +6,15 @@ import (
 	"io"
 )
 
+type PacketError struct {
+	p   Packet
+	err error
+}
+
+func (e PacketError) Error() string {
+	return fmt.Sprintf("packet error: %v: %04x", e.err, e.p.Header.Msg)
+}
+
 type Header struct {
 	// sequence of the packet used to wait for acknowledgement
 	Seq uint32
