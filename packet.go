@@ -77,32 +77,18 @@ func writePacket(w io.Writer, p Packet) (err error) {
 	return
 }
 
-func readPacketHeader(r io.Reader, p *Packet) (err error) {
-	var magic, version uint32
-	err = binary.Read(r, binary.LittleEndian, &magic)
-	if err != nil {
-		return err
-	}
+func readPacketHeader(buf []byte, p *Packet) (err error) {
+	magic := binary.LittleEndian.Uint32(buf[0:])
 	if magic != CSMagic {
 		return fmt.Errorf("wrong magic: %08x", magic)
 	}
-	err = binary.Read(r, binary.LittleEndian, &version)
-	if err != nil {
-		return err
-	}
 
-	err = binary.Read(r, binary.LittleEndian, &p.Seq)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(r, binary.LittleEndian, &p.Msg)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(r, binary.LittleEndian, &p.Len)
-	if err != nil {
-		return err
-	}
+	version := binary.LittleEndian.Uint32(buf[4:])
+	_ = version
+
+	p.Seq = binary.LittleEndian.Uint32(buf[8:])
+	p.Msg = binary.LittleEndian.Uint32(buf[12:])
+	p.Len = binary.LittleEndian.Uint32(buf[16:])
 	return nil
 }
 

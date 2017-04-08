@@ -350,13 +350,20 @@ func (c *Conn) fatal(err error) {
 
 type Reader struct {
 	br  *bufio.Reader
-	buf []byte
+	// reusable buffer for header parsing
+	hbuf [20]byte
+	buf  []byte
 }
 
 func (r *Reader) ReadPacket() (p Packet, err error) {
-	err = readPacketHeader(r.br, &p)
+	buf := r.hbuf[:]
+	_, err = io.ReadFull(r.br, buf)
 	if err != nil {
 		return p, fmt.Errorf("mrim: cound not read packet header: %v", err)
+	}
+	err = readPacketHeader(buf, &p)
+	if err != nil {
+		return p, fmt.Errorf("mrim: cound not parse packet header: %v", err)
 	}
 
 	n, err := r.br.Read(r.buf)
