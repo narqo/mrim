@@ -125,14 +125,28 @@ func (c *Conn) setupConnection(username, password string, status uint32, clientD
 }
 
 // FIXME(varankinv): Conn.Close
-func (c *Conn) Close() error {
+func (c *Conn) Close() (err error) {
 	c.mu.Lock()
 	if !c.stopped {
 		c.stopped = true
 	}
-	c.mu.Unlock()
 
-	err := c.conn.Close()
+	if c.pingTimer != nil {
+		c.pingTimer.Stop()
+		c.pingTimer = nil
+	}
+
+	// make sure we have flushed the outbound
+	if c.conn != nil {
+		if c.bw.Buffered() > 0 {
+			err = c.Flush()
+			if err != nil {
+				debugf("failed to flush pending data: %v", err)
+			}
+		}
+		err = c.conn.Close()
+	}
+	c.mu.Unlock()
 
 	c.wg.Wait()
 
@@ -316,10 +330,19 @@ func (c *Conn) readLoop() {
 }
 
 func (c *Conn) fatal(err error) {
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
 	debugf("fatal: %v", err)
 
 	c.mu.Lock()
-	c.err = err
+	if c.err == nil {
+		c.err = err
+	}
 	c.mu.Unlock()
 
 	c.Close()
