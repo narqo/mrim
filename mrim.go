@@ -19,7 +19,15 @@ var (
 
 const (
 	DefaultInitTimeout = 30 * time.Second
+	DefaultTimeout     = 15 * time.Minute
 )
+
+var defaultLogger Logger = log.New(os.Stderr, "mrim: ", log.Lshortfile)
+
+type Logger interface {
+	Printf(format string, v ...interface{})
+	Println(v ...interface{})
+}
 
 type Options struct {
 	Addr       string
@@ -27,11 +35,12 @@ type Options struct {
 	Password   string
 	Status     uint32
 	ClientDesc string
+	Logger     Logger
 }
 
 type Client struct {
 	conn   *Conn
-	logger *log.Logger
+	logger Logger
 
 	loginAddr net.Addr
 
@@ -41,38 +50,46 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, opt *Options) (*Client, error) {
-	logger := log.New(os.Stderr, "mrim: ", log.Lshortfile)
 	c := &Client{
-		logger:     logger,
 		clientDesc: opt.ClientDesc,
 	}
 
-	err := c.Connect(ctx, opt.Addr)
+	if opt.Logger != nil {
+		c.logger = opt.Logger
+	} else {
+		c.logger = defaultLogger
+	}
+
+	err := c.Connect(ctx, opt.Addr, opt.Username, opt.Password, opt.Status)
 	if err != nil {
 		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Client) Connect(ctx context.Context, address, username, password string, status uint32) error {
+	if c.conn != nil {
+		return errors.New("mrim: already connected")
+	}
+	err := c.dial(ctx, address)
+	if err != nil {
+		return err
 	}
 
 	err = c.Hello(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	err = c.Auth(ctx, opt.Username, opt.Password, opt.Status)
+	err = c.Auth(ctx, username, password, status)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// after this point conn is meant to be established, run the conn reader
 	c.conn.Run()
 
-	return c, nil
-}
-
-func (c *Client) Connect(ctx context.Context, address string) error {
-	if c.conn != nil {
-		return errors.New("mrim: already connected")
-	}
-	return c.connect(ctx, address)
+	return nil
 }
 
 func parseLoginAddr(data []byte) (net.Addr, error) {
@@ -94,9 +111,21 @@ func parseLoginAddr(data []byte) (net.Addr, error) {
 	return loginAddr, nil
 }
 
-// connect initializes net connection to login host retrieved from server address.
-// TODO(varankinv): refactor connect()
-func (c *Client) connect(ctx context.Context, address string) error {
+func dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error) {
+	dialer := &net.Dialer{
+		Timeout: timeout,
+	}
+	nconn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	conn := NewConn(ctx, nconn)
+	return conn, nil
+}
+
+// dial initializes net connection to login host retrieved from server address.
+// TODO(varankinv): refactor dial()
+func (c *Client) dial(ctx context.Context, address string) error {
 	nconn, err := net.DialTimeout("tcp", address, DefaultInitTimeout)
 	if err != nil {
 		return err
@@ -114,7 +143,7 @@ func (c *Client) connect(ctx context.Context, address string) error {
 
 	c.logger.Printf("loggin addr: %s\n", loginAddr.String())
 
-	conn, err := Dial(ctx, loginAddr.String())
+	conn, err := dial(ctx, loginAddr.String(), DefaultTimeout)
 	if err != nil {
 		return fmt.Errorf("could not dial to login addr: %v", err)
 	}

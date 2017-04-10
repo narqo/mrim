@@ -7,32 +7,15 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"sync"
 	"time"
 )
 
-const (
-	mraBufSize = 32768
-
-	DefaultTimeout = 15 * time.Minute
-)
+const mraBufSize = 32768
 
 var (
 	errUnknownPacket = errors.New("unknown packet")
 )
-
-func Dial(ctx context.Context, addr string) (*Conn, error) {
-	dialer := &net.Dialer{
-		Timeout: DefaultTimeout,
-	}
-	nconn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	conn := NewConn(ctx, nconn)
-	return conn, nil
-}
 
 type Conn struct {
 	Reader
