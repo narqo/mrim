@@ -3,6 +3,7 @@ package mrim
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -100,6 +101,7 @@ func (w *PacketWriter) Write(p []byte) (int, error) {
 	return w.b.Write(p)
 }
 
+// maybe https://github.com/go-redis/redis/blob/master/internal/proto/scan.go
 func (w *PacketWriter) WriteData(v interface{}) (n int, err error) {
 	if v == nil {
 		return
@@ -137,4 +139,17 @@ func (w *PacketWriter) Packet(msg uint32) (p Packet) {
 	p.Header.Len = uint32(len(p.Data))
 	p.Header.Msg = msg
 	return
+}
+
+// unpackLPS unpacks LSP (long pascal string, size uint32 + str string) from v.
+func unpackLPS(v []byte) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	l := binary.LittleEndian.Uint32(v)
+	v = v[4:]
+	if int(l) > len(v) {
+		return "", errors.New("out of bound")
+	}
+	return string(v[:l]), nil
 }

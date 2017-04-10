@@ -3,7 +3,6 @@ package mrim
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +19,6 @@ const (
 )
 
 var (
-	errNoHello       = errors.New("no hello")
 	errUnknownPacket = errors.New("unknown packet")
 )
 
@@ -44,7 +42,7 @@ type Conn struct {
 	conn io.ReadWriteCloser
 	// associated context will be used for cancellation in future.
 	ctx context.Context
-	// last caught error
+	// TODO(varankinv): last caught error
 	err error
 
 	mu   sync.RWMutex
@@ -52,10 +50,7 @@ type Conn struct {
 	wg   sync.WaitGroup
 
 	stopped bool
-	// helloAck becomes true after MRIM_CS_HELLO_ACK retrived.
-	helloAck bool
-
-	// TODO
+	// TODO(varankinv): seq pool
 	seq uint32
 
 	// ping interval retrieved with MRIM_CS_HELLO_ACK.
@@ -78,13 +73,8 @@ func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 	return c
 }
 
-func (c *Conn) Run(username, password string, status uint32, clientDesc string) {
+func (c *Conn) Run() {
 	c.once.Do(func() {
-		err := c.setupConnection(username, password, status, clientDesc)
-		if err != nil {
-			c.fatal(err)
-		}
-
 		c.mu.Lock()
 		c.run()
 		c.mu.Unlock()
@@ -92,10 +82,6 @@ func (c *Conn) Run(username, password string, status uint32, clientDesc string) 
 }
 
 func (c *Conn) run() {
-	if !c.helloAck {
-		c.fatal(errNoHello)
-	}
-
 	go c.readLoop()
 
 	if c.pingInterval > 0 {
@@ -108,20 +94,6 @@ func (c *Conn) run() {
 			c.pingTimer.Reset(pingInterval)
 		}
 	}
-}
-
-func (c *Conn) setupConnection(username, password string, status uint32, clientDesc string) error {
-	err := c.hello()
-	if err != nil {
-		return err
-	}
-
-	err = c.auth(username, password, status, clientDesc)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // FIXME(varankinv): Conn.Close
@@ -188,101 +160,17 @@ func (c *Conn) send(ctx context.Context, p Packet) (err error) {
 		err = c.WritePacket(p)
 	}
 
-	if err != nil {
-		debug(PacketError{p, fmt.Errorf("packet droped: %v", err)})
-	} else {
+	if err == nil {
 		return c.Flush()
+	} else {
+		debug(PacketError{p, fmt.Errorf("packet droped: %v", err)})
 	}
 	return
 }
 
-// hello sends "MRIM_CS_HELLO" message and reads the reply.
-func (c *Conn) hello() (err error) {
-	var p Packet
-	p.Header.Msg = MsgCSHello
-
-	err = c.send(c.ctx, p)
-	if err != nil {
-		return err
-	}
-
-	// read reply here because readLoop hasn't been started yet.
-	p, err = c.ReadPacket()
-	if err != nil {
-		return err
-	}
-
-	if p.Msg != MsgCSHelloAck {
-		return PacketError{p, errUnknownPacket}
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.helloAck = true
-
-	pingInterval := binary.LittleEndian.Uint32(p.Data)
-	log.Printf("> received \"MRIM_CS_HELLO_ACK\" packet: %d, %04x, ping %d\n", p.Seq, p.Msg, pingInterval)
-
-	if pingInterval > 0 {
-		c.pingInterval = time.Duration(pingInterval) * time.Second
-	}
-
-	return nil
-}
-
-type AuthError struct {
-	s string
-}
-
-func (e AuthError) Error() string {
-	return e.s
-}
-
-// auth sends "MRIM_CS_LOGIN2" and reads the reply.
-func (c *Conn) auth(username, password string, status uint32, clientDesc string) (err error) {
-	pw := PacketWriter{}
-	pw.WriteData(username)
-	pw.WriteData(password)
-	pw.WriteData(status)
-	pw.WriteData(clientDesc)
-	for i := 0; i < 5; i++ {
-		pw.WriteData(0) // internal fields
-	}
-
-	err = c.send(c.ctx, pw.Packet(MsgCSLogin2))
-	if err != nil {
-		return err
-	}
-
-	// read reply here because readLoop hasn't been started yet.
-	p, err := c.ReadPacket()
-	if err != nil {
-		return err
-	}
-
-	switch p.Msg {
-	case MsgCSLoginAck:
-		log.Printf("> received \"MRIM_CS_LOGIN_ACK\" packet: %d, %04x\n", p.Seq, p.Msg)
-
-	case MsgCSLoginRej:
-		reason, err := unpackLPS(p.Data)
-		if err != nil {
-			return fmt.Errorf("mrim: cound not read auth rejection reason: %v", err)
-		}
-		log.Printf("> received \"MRIM_CS_LOGIN_REJ\" packet: %d, %04x, reason %q\n", p.Seq, p.Msg, reason)
-		return AuthError{reason}
-
-	default:
-		return PacketError{p, errUnknownPacket}
-	}
-
-	return nil
-}
-
 func (c *Conn) ping(d time.Duration) {
 	c.mu.RLock()
-	if !c.helloAck {
+	if c.stopped {
 		c.mu.RUnlock()
 		return
 	}
@@ -399,17 +287,4 @@ func debug(v ...interface{}) {
 
 func debugf(format string, v ...interface{}) {
 	log.Printf(format+"\n", v...)
-}
-
-// unpackLPS unpacks LSP (long pascal string, size uint32 + str string) from v.
-func unpackLPS(v []byte) (string, error) {
-	if v == nil {
-		return "", nil
-	}
-	l := binary.LittleEndian.Uint32(v)
-	v = v[4:]
-	if int(l) > len(v) {
-		return "", errors.New("out of bound")
-	}
-	return string(v[:l]), nil
 }
