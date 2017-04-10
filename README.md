@@ -3,7 +3,9 @@
 A Go client for Mail.Ru Agent aka Mail.Ru Instant Messenger (mrim).
 
 ---
+
 **The project is NOT meant to be finished. Yet. Contributions are welcome.**
+
 ---
 
 ## Basic Usage
