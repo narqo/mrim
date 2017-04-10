@@ -45,7 +45,7 @@ type Client struct {
 	loginAddr net.Addr
 
 	clientDesc string
-	// helloAck becomes true after MRIM_CS_HELLO_ACK retrived.
+	// helloAck becomes true after MRIM_CS_HELLO_ACK received.
 	helloAck bool
 }
 
@@ -263,6 +263,15 @@ func (c *Client) Auth(ctx context.Context, username, password string, status uin
 	return nil
 }
 
+// Send sends packet p to the server.
 func (c *Client) Send(ctx context.Context, p Packet) error {
 	return c.conn.Send(ctx, p)
+}
+
+// Recv reads next packet from the server.
+func (c *Client) Recv() (p Packet, err error) {
+	if !c.helloAck {
+		return p, ErrNoHello
+	}
+	return c.conn.Recv()
 }

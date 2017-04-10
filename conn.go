@@ -11,11 +11,55 @@ import (
 	"time"
 )
 
+// The size of socket reader buffer.
 const mraBufSize = 32768
 
 var (
 	errUnknownPacket = errors.New("unknown packet")
 )
+
+type recvBuf struct {
+	c       chan Packet
+	mu      sync.Mutex
+	backlog []Packet
+}
+
+func newRecvBuf() *recvBuf {
+	return &recvBuf{
+		c: make(chan Packet, 1),
+	}
+}
+
+func (t *recvBuf) put(p Packet) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.backlog) == 0 {
+		select {
+		case t.c <- p:
+			return
+		default:
+			debug("put packet into backlog: %04x", p.Msg)
+		}
+	}
+	// FIXME(varankinv): drop (old?) packets after some maxRecvBufSize
+	t.backlog = append(t.backlog, p)
+}
+
+func (t *recvBuf) load() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.backlog) > 0 {
+		select {
+		case t.c <- t.backlog[0]:
+			t.backlog = t.backlog[1:]
+		default:
+		}
+	}
+}
+
+func (t *recvBuf) get() <-chan Packet {
+	return t.c
+}
 
 type Conn struct {
 	Reader
@@ -27,6 +71,9 @@ type Conn struct {
 	ctx context.Context
 	// TODO(varankinv): last caught error
 	err error
+
+	// received packets buffer.
+	recvBuf *recvBuf
 
 	mu   sync.RWMutex
 	once sync.Once
@@ -43,8 +90,9 @@ type Conn struct {
 
 func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 	c := &Conn{
-		ctx:  ctx,
-		conn: conn,
+		conn:    conn,
+		ctx:     ctx,
+		recvBuf: newRecvBuf(),
 	}
 	c.Writer = Writer{
 		bw: bufio.NewWriter(c.conn),
@@ -159,7 +207,7 @@ func (c *Conn) ping(d time.Duration) {
 	}
 	c.mu.RUnlock()
 
-	// NOTE: there is such thing as pong.
+	// NOTE: there is no such thing as pong.
 	var p Packet
 	p.Header.Msg = MsgCSPing
 	c.Send(c.ctx, p)
@@ -185,18 +233,50 @@ func (c *Conn) readLoop() {
 		stopped = c.stopped
 		c.mu.RUnlock()
 
-		// packets which (mostly all) are not replies
+		// put packet into a buffer to consume later
+		c.recvBuf.put(p)
+	}
+}
+
+func (c *Conn) Recv() (p Packet, err error) {
+	if c.err != nil {
+		return p, c.err
+	}
+	defer func() {
+		c.err = err
+	}()
+
+	c.mu.RLock()
+	stopped := c.stopped
+	c.mu.RUnlock()
+
+	if stopped {
+		return p, io.EOF
+	}
+
+	select {
+	case <-c.ctx.Done():
+		return p, c.ctx.Err()
+	case p := <-c.recvBuf.get():
+		c.recvBuf.load()
+
+		// packets that are not replies
 		switch p.Header.Msg {
 		case MsgCSUserInfo:
-			debugf("> received \"MRIM_CS_USER_INFO\" packet: %04x", p.Msg)
+			debugf("< received \"MRIM_CS_USER_INFO\" packet: %04x", p.Msg)
 
 		case MrimCSOfflineMessageAck:
 			// TODO(varankinv): send MRIM_CS_DELETE_OFFLINE_MESSAGE for each offline message.
-			debugf("> received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %04x", p.Msg)
+			debugf("< received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %04x", p.Msg)
 
 		case MsgCSContactList2:
-			debugf("> received \"MRIM_CS_CONTACT_LIST2\" packet: %04x", p.Msg)
+			debugf("< received \"MRIM_CS_CONTACT_LIST2\" packet: %04x", p.Msg)
+
+		default:
+			debugf("< received \"???\" packet: %04x", p.Msg)
 		}
+
+		return p, err
 	}
 }
 
@@ -220,7 +300,7 @@ func (c *Conn) fatal(err error) {
 }
 
 type Reader struct {
-	br  *bufio.Reader
+	br *bufio.Reader
 	// reusable buffer for header parsing
 	hbuf [20]byte
 	buf  []byte
@@ -246,7 +326,7 @@ func (r *Reader) ReadPacket() (p Packet, err error) {
 	}
 	// TODO(varankinv): what those first n-len bytes for?
 	p.Data = r.buf[n-int(p.Len): n]
-	debugf("< received \"???\" packet: %d, %04x %d (%d) %v", p.Seq, p.Msg, p.Len, n, p.Data)
+	//debugf("< received \"???\" packet: %d, %04x %d (%d) %v", p.Seq, p.Msg, p.Len, n, p.Data)
 	return
 }
 
@@ -260,7 +340,7 @@ func (w *Writer) WritePacket(p Packet) error {
 }
 
 func (w *Writer) Flush() error {
-	debugf("> flush: %d %d", w.bw.Buffered(), w.bw.Available())
+	//debugf("> flush: %d %d", w.bw.Buffered(), w.bw.Available())
 	return w.bw.Flush()
 }
 

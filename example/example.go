@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/narqo/mrim"
@@ -24,6 +27,13 @@ var (
 func main() {
 	flag.Parse()
 
+	errc := make(chan error, 1)
+	go func() {
+		c := make(chan os.Signal)
+		signal.Notify(c, syscall.SIGINT)
+		errc <- fmt.Errorf("%s", <-c)
+	}()
+
 	ctx := context.Background()
 
 	opt := &mrim.Options{
@@ -39,24 +49,34 @@ func main() {
 	}
 	defer c.Close()
 
-	err = spamChat(ctx, c, *recipient)
-	if err != nil {
-		log.Fatal(err)
-	}
+	go spamChat(ctx, c, *recipient)
+	go readChat(ctx, c)
 
-	log.Println("exiting...")
+	fmt.Printf("exiting %v\n", <-errc)
 }
 
-func spamChat(ctx context.Context, c *mrim.Client, to string) (err error) {
-	for i := 0; i < 10; i++ {
-		err = sendMsg(ctx, c, to, fmt.Sprintf("test message %d", i))
+func readChat(ctx context.Context, c *mrim.Client) {
+	log.Println("read chat")
+	for {
+		p, err := c.Recv()
 		if err != nil {
-			break
+			log.Printf("could not read reply: %v\n", err)
+			continue
+		}
+		log.Printf("received packet: %d, %04x %v\n", p.Seq, p.Msg, p.Data)
+	}
+}
+
+func spamChat(ctx context.Context, c *mrim.Client, to string) {
+	log.Println("spam chat")
+	for i := 0; i < 5; i++ {
+		err := sendMsg(ctx, c, to, fmt.Sprintf("test message %d", i))
+		if err != nil {
+			log.Printf("could not send message: %v\n", err)
+			continue
 		}
 		time.Sleep(3 * time.Second)
 	}
-	log.Printf("spam chat done: %v\n", err)
-	return
 }
 
 func sendMsg(ctx context.Context, c *mrim.Client, to, msg string) error {
