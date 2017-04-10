@@ -166,6 +166,7 @@ func (c *Client) Close() error {
 }
 
 // Hello sends "MRIM_CS_HELLO" message and reads the reply.
+// It's an error to call Hello more than once.
 func (c *Client) Hello(ctx context.Context) (err error) {
 	if c.helloAck {
 		return errors.New("mrim: repeative hello call")
@@ -173,6 +174,8 @@ func (c *Client) Hello(ctx context.Context) (err error) {
 	return c.hello(ctx)
 }
 
+// hello is an idempotent version of Hello.
+// It process the response and updates underlying conn's pingInterval according to reply.
 func (c *Client) hello(ctx context.Context) (err error) {
 	if c.helloAck {
 		return nil
