@@ -10,7 +10,7 @@ A Go client for Mail.Ru Agent aka Mail.Ru Instant Messenger (mrim).
 
 ## Basic Usage
 
-~~~go
+```go
 // Creare a client new instance.
 opts := &mrim.Options{
     Addr:       "mrim.mail.ru:2042",
@@ -30,7 +30,7 @@ p := mrim.Packet{
         Msg: mrim.MsgCSPing,
     }
 }
-err = c.Send(context.TODO(), p)
+err = c.Send(ctx, p)
 
 // Read incoming packets.
 for {
@@ -41,7 +41,7 @@ for {
         // got unread message
     }
 }
-~~~
+```
 
 ## See Also
 
