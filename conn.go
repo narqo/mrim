@@ -8,58 +8,89 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// The size of socket reader buffer.
-const mraBufSize = 32768
+const (
+	// The size of socket reader buffer.
+	mraBufSize = 32768
+	// The size of recv buffer.
+	recvBufSize = 1400
+)
 
 var (
 	errUnknownPacket = errors.New("unknown packet")
 )
 
 type recvBuf struct {
-	c       chan Packet
-	mu      sync.Mutex
+	c  chan Packet
+	mu sync.Mutex
+
 	backlog []Packet
+	head    int
+	tail    int
+	size    int
 }
 
-func newRecvBuf() *recvBuf {
+func newRecvBuf(size int) *recvBuf {
 	return &recvBuf{
-		c: make(chan Packet, 1),
+		c:       make(chan Packet, 1),
+		backlog: make([]Packet, size),
+		size:    size,
 	}
 }
 
 func (t *recvBuf) put(p Packet) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.backlog) == 0 {
+	if t.len() == 0 {
 		select {
 		case t.c <- p:
 			return
 		default:
-			debug("put packet into backlog: %04x", p.Msg)
+			debugf("put packet into backlog: %04x", p.Msg)
 		}
 	}
-	// FIXME(varankinv): drop (old?) packets after some maxRecvBufSize
-	t.backlog = append(t.backlog, p)
+	if t.len() >= t.size {
+		debugf("drop packet: %04x", p.Msg)
+		return
+	}
+	t.backlog[t.tail] = p
+	if t.tail >= t.size {
+		t.tail = 0
+	} else {
+		t.tail++
+	}
 }
 
 func (t *recvBuf) load() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.backlog) > 0 {
+	if t.len() > 0 {
 		select {
-		case t.c <- t.backlog[0]:
-			t.backlog = t.backlog[1:]
+		case t.c <- t.backlog[t.head]:
+			if t.head >= t.size - 1 {
+				t.head = 0
+			} else {
+				t.head++
+			}
 		default:
 		}
 	}
 }
 
-func (t *recvBuf) get() <-chan Packet {
+func (t *recvBuf) take() <-chan Packet {
 	return t.c
 }
+
+func (t *recvBuf) len() int {
+	if t.tail >= t.head {
+		return t.tail - t.head
+	}
+	return t.size - t.head + t.tail
+}
+
 
 type Conn struct {
 	Reader
@@ -92,7 +123,7 @@ func NewConn(ctx context.Context, conn io.ReadWriteCloser) *Conn {
 	c := &Conn{
 		conn:    conn,
 		ctx:     ctx,
-		recvBuf: newRecvBuf(),
+		recvBuf: newRecvBuf(recvBufSize),
 	}
 	c.Writer = Writer{
 		bw: bufio.NewWriter(c.conn),
@@ -158,10 +189,7 @@ func (c *Conn) Close() (err error) {
 
 func (c *Conn) Do(ctx context.Context, msg uint32, data []byte) error {
 	// TODO: acquire sequence
-	c.mu.Lock()
-	seq := c.seq
-	c.seq++
-	c.mu.Unlock()
+	seq := atomic.AddUint32(&c.seq, 1)
 
 	var p Packet
 	p.Seq = seq
@@ -257,7 +285,7 @@ func (c *Conn) Recv() (p Packet, err error) {
 	select {
 	case <-c.ctx.Done():
 		return p, c.ctx.Err()
-	case p := <-c.recvBuf.get():
+	case p := <-c.recvBuf.take():
 		c.recvBuf.load()
 
 		// packets that are not replies
@@ -324,7 +352,7 @@ func (r *Reader) ReadPacket() (p Packet, err error) {
 	if n < int(p.Len) {
 		return p, fmt.Errorf("mrim: read less that expected: read %d, want %d", n, p.Len)
 	}
-	// TODO(varankinv): what those first n-len bytes for?
+	// TODO(varankinv): what those head n-len bytes for?
 	p.Data = r.buf[n-int(p.Len): n]
 	//debugf("< received \"???\" packet: %d, %04x %d (%d) %v", p.Seq, p.Msg, p.Len, n, p.Data)
 	return
