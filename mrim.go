@@ -148,6 +148,13 @@ func (c *Client) dial(ctx context.Context, address string) error {
 		return fmt.Errorf("could not dial to login addr: %v", err)
 	}
 
+	select {
+	case <-ctx.Done():
+		conn.Close()
+		return ctx.Err()
+	default:
+	}
+
 	c.loginAddr = loginAddr
 	c.conn = conn
 

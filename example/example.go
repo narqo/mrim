@@ -35,6 +35,12 @@ func main() {
 	}()
 
 	ctx := context.Background()
+	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(15 * time.Second))
+
+	time.AfterFunc(10 * time.Second, func() {
+		fmt.Println("cancel context")
+		cancel()
+	})
 
 	opt := &mrim.Options{
 		Addr:       hostPort,
@@ -60,6 +66,10 @@ func readChat(ctx context.Context, c *mrim.Client) {
 	for {
 		p, err := c.Recv()
 		if err != nil {
+			if err == context.Canceled {
+				log.Printf("context was canceld: %v\n", err)
+				break
+			}
 			log.Printf("could not read reply: %v\n", err)
 			continue
 		}

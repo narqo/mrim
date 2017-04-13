@@ -308,6 +308,13 @@ func (c *Conn) Recv() (p Packet, err error) {
 	}
 }
 
+func (c *Conn) Err() error {
+	c.mu.RLock()
+	err := c.err
+	c.mu.RUnlock()
+	return err
+}
+
 func (c *Conn) fatal(err error) {
 	c.mu.Lock()
 	if c.stopped {
