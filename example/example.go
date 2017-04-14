@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	hostPort   = "mrim.mail.ru:2042"
-	versionTxt = "go mrim client 1.0"
+	hostPort = "mrim.mail.ru:2042"
 )
 
 var (
@@ -35,19 +34,19 @@ func main() {
 	}()
 
 	ctx := context.Background()
-	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(15 * time.Second))
+	//ctx, cancel := context.WithDeadline(ctx, time.Now().Add(15*time.Second))
 
-	time.AfterFunc(10 * time.Second, func() {
-		fmt.Println("cancel context")
-		cancel()
-	})
+	//time.AfterFunc(30*time.Second, func() {
+	//	fmt.Println("cancel context")
+	//	cancel()
+	//})
 
 	opt := &mrim.Options{
-		Addr:       hostPort,
-		ClientDesc: versionTxt,
-		Username:   *username,
-		Password:   *password,
-		Status:     mrim.StatusOnline,
+		Addr:      hostPort,
+		Username:  *username,
+		Password:  *password,
+		UserAgent: mrim.DefaultUserAgent,
+		Status:    mrim.StatusOnline,
 	}
 	c, err := mrim.NewClient(ctx, opt)
 	if err != nil {
@@ -80,7 +79,7 @@ func readChat(ctx context.Context, c *mrim.Client) {
 func spamChat(ctx context.Context, c *mrim.Client, to string) {
 	log.Println("spam chat")
 	for i := 0; i < 5; i++ {
-		err := sendMsg(ctx, c, to, fmt.Sprintf("test message %d", i))
+		err := sendMsg(ctx, c, to, fmt.Sprintf("Поехали! Test message %d", i))
 		if err != nil {
 			log.Printf("could not send message: %v\n", err)
 			continue

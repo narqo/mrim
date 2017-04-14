@@ -337,7 +337,7 @@ func (c *Conn) fatal(err error) {
 type Reader struct {
 	br *bufio.Reader
 	// reusable buffer for header parsing
-	hbuf [20]byte
+	hbuf [headerSize]byte
 	buf  []byte
 }
 
@@ -345,22 +345,21 @@ func (r *Reader) ReadPacket() (p Packet, err error) {
 	buf := r.hbuf[:]
 	_, err = io.ReadFull(r.br, buf)
 	if err != nil {
-		return p, fmt.Errorf("mrim: cound not read packet header: %v", err)
+		return p, fmt.Errorf("cound not read packet header: %v", err)
 	}
 	err = readPacketHeader(buf, &p)
 	if err != nil {
-		return p, fmt.Errorf("mrim: cound not parse packet header: %v", err)
+		return p, fmt.Errorf("cound not parse packet header: %v", err)
 	}
 
 	n, err := r.br.Read(r.buf)
 	if err != nil {
-		return p, fmt.Errorf("mrim: cound not read packet body: %v", err)
+		return p, fmt.Errorf("cound not read packet body: %v", err)
 	}
 	if n < int(p.Len) {
-		return p, fmt.Errorf("mrim: read less that expected: read %d, want %d", n, p.Len)
+		return p, fmt.Errorf("read less that expected: read %d, want %d", n, p.Len)
 	}
-	// TODO(varankinv): what those head n-len bytes for?
-	p.Data = r.buf[n-int(p.Len): n]
+	p.Data = r.buf[:p.Len]
 	//debugf("< received \"???\" packet: %d, %04x %d (%d) %v", p.Seq, p.Msg, p.Len, n, p.Data)
 	return
 }
@@ -370,7 +369,7 @@ type Writer struct {
 }
 
 func (w *Writer) WritePacket(p Packet) error {
-	debugf("> sent \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
+	//debugf("> sent \"???\" packet: %d, %04x %d %v", p.Seq, p.Msg, p.Len, p.Data)
 	return writePacket(w.bw, p)
 }
 

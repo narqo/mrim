@@ -2,7 +2,7 @@ package mrim
 
 const (
 	protoVersionMajor = 1
-	protoVersionMinor = 8
+	protoVersionMinor = 14
 )
 
 const (
@@ -37,6 +37,19 @@ const (
 	MsgCSMailboxStatus        = 0x1033
 	MsgCSContactList2         = 0x1037
 	MsgCSLogin2               = 0x1038
+)
+
+const (
+	FeatureRTFMessage     = 0x00000001
+	FeatureBaseSmiles     = 0x00000002
+	FeatureAdvancedSmiles = 0x00000004
+	FeatureContactsExch   = 0x00000008
+	FeatureWakeup         = 0x00000010
+	FeatureMults          = 0x00000020
+	FeatureFileTransfer   = 0x00000040
+	FeatureVoice          = 0x00000080
+	FeatureVideo          = 0x00000100
+	FeatureGames          = 0x00000200
 )
 
 const (

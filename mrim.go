@@ -18,6 +18,14 @@ var (
 )
 
 const (
+	LangEn = "en"
+	LangRu = "ru"
+	LangUa = "ua"
+)
+
+var DefaultUserAgent = fmt.Sprintf(`client="%s" version="%s"`, "GoClient", "1.0")
+
+const (
 	DefaultInitTimeout = 30 * time.Second
 	DefaultTimeout     = 15 * time.Minute
 )
@@ -30,12 +38,13 @@ type Logger interface {
 }
 
 type Options struct {
-	Addr       string
-	Username   string
-	Password   string
-	Status     uint32
-	ClientDesc string
-	Logger     Logger
+	Addr      string
+	Username  string
+	Password  string
+	Status    uint32
+	UserAgent string
+	Lang      string // (>=1.16)
+	Logger    Logger
 }
 
 type Client struct {
@@ -44,14 +53,28 @@ type Client struct {
 
 	loginAddr net.Addr
 
-	clientDesc string
+	userAgent string
+	lang      string
 	// helloAck becomes true after MRIM_CS_HELLO_ACK received.
 	helloAck bool
 }
 
 func NewClient(ctx context.Context, opt *Options) (*Client, error) {
 	c := &Client{
-		clientDesc: opt.ClientDesc,
+		userAgent: opt.UserAgent,
+		lang:      opt.Lang,
+	}
+
+	if opt.UserAgent != "" {
+		c.userAgent = opt.UserAgent
+	} else {
+		c.userAgent = DefaultUserAgent
+	}
+
+	if opt.Lang != "" {
+		c.lang = opt.Lang
+	} else {
+		c.lang = LangRu
 	}
 
 	if opt.Logger != nil {
@@ -235,15 +258,8 @@ func (c *Client) Auth(ctx context.Context, username, password string, status uin
 		return ErrNoHello
 	}
 
-	pw := PacketWriter{}
-	pw.WriteData(username)
-	pw.WriteData(password)
-	pw.WriteData(status)
-	pw.WriteData(c.clientDesc)
-	for i := 0; i < 5; i++ {
-		pw.WriteData(0) // internal fields
-	}
-	err = c.conn.Send(ctx, pw.Packet(MsgCSLogin2))
+	pCsLogin2 := c.packetCsLogin2(ctx, username, password, status)
+	err = c.conn.Send(ctx, pCsLogin2)
 	if err != nil {
 		return err
 	}
@@ -271,6 +287,21 @@ func (c *Client) Auth(ctx context.Context, username, password string, status uin
 	}
 
 	return nil
+}
+
+func (c *Client) packetCsLogin2(ctx context.Context, username, password string, status uint32) Packet {
+	pw := PacketWriter{}
+	pw.WriteData(username)
+	pw.WriteData(password)
+	pw.WriteData(status)
+	pw.WriteData(0) // spec_status_uri
+	pw.WriteData(0) // status_title
+	pw.WriteData(0) // status_desc
+	pw.WriteData(0) // features
+	pw.WriteData(c.userAgent)
+	//pw.WriteData(c.lang)
+	pw.WriteData([]byte{' '}) // client_desc
+	return pw.Packet(MsgCSLogin2)
 }
 
 // Send sends packet p to the server.

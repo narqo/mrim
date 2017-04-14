@@ -78,7 +78,13 @@ func writePacket(w io.Writer, p Packet) (err error) {
 	return
 }
 
+const headerSize = 44
+
 func readPacketHeader(buf []byte, p *Packet) (err error) {
+	if len(buf) < headerSize {
+		return fmt.Errorf("buffer too small: %d", len(buf))
+	}
+
 	magic := binary.LittleEndian.Uint32(buf[0:])
 	if magic != CSMagic {
 		return fmt.Errorf("wrong magic: %08x", magic)
@@ -90,6 +96,9 @@ func readPacketHeader(buf []byte, p *Packet) (err error) {
 	p.Seq = binary.LittleEndian.Uint32(buf[8:])
 	p.Msg = binary.LittleEndian.Uint32(buf[12:])
 	p.Len = binary.LittleEndian.Uint32(buf[16:])
+
+	// the rest bytes are for from, fromPort, and headerReserved fields, which are not used
+
 	return nil
 }
 
@@ -114,19 +123,19 @@ func (w *PacketWriter) WriteData(v interface{}) (n int, err error) {
 		err = binary.Write(w, binary.LittleEndian, uint32(v))
 	case uint32:
 		err = binary.Write(w, binary.LittleEndian, v)
-	case string:
-		err = binary.Write(w, binary.LittleEndian, uint32(len(v)))
-		if err != nil {
-			return
-		}
-		n, err = w.Write([]byte(v))
-		n += 4
 	case []byte:
 		err = binary.Write(w, binary.LittleEndian, uint32(len(v)))
 		if err != nil {
 			return
 		}
 		n, err = w.Write(v)
+		n += 4
+	case string:
+		err = binary.Write(w, binary.LittleEndian, uint32(len(v)))
+		if err != nil {
+			return
+		}
+		n, err = w.Write([]byte(v))
 		n += 4
 	default:
 		err = fmt.Errorf("unsupported type %T", v)
