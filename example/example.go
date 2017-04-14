@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/narqo/mrim"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 const (
@@ -72,7 +75,30 @@ func readChat(ctx context.Context, c *mrim.Client) {
 			log.Printf("could not read reply: %v\n", err)
 			continue
 		}
+
 		log.Printf("received packet: %d, %04x %v\n", p.Seq, p.Msg, p.Data)
+
+		handlePacket(ctx, p)
+	}
+}
+
+func handlePacket(ctx context.Context, p mrim.Packet) {
+	switch p.Msg {
+	case mrim.MsgCSMessageAck:
+		msgID := binary.LittleEndian.Uint32(p.Data[0:])
+		flags := binary.LittleEndian.Uint32(p.Data[4:])
+		fromLen := binary.LittleEndian.Uint32(p.Data[8:])
+		from := p.Data[12:fromLen]
+		//msgLen := binary.LittleEndian.Uint32(p.Data[12+fromLen:])
+		rawMsg := p.Data[16+fromLen:]
+		log.Printf("received \"MRIM_CS_MESSAGE_ACK\" packet: %d, %04x %v %v %v %s\n", p.Seq, p.Msg, msgID, flags, from, rawMsg)
+
+	case mrim.MsgCSMessageRecv:
+		log.Printf("received \"MRIM_CS_MESSAGE_RECV\" packet: %d, %04x %v\n", p.Seq, p.Msg, p.Data)
+
+	case mrim.MrimCSOfflineMessageAck:
+		log.Printf("received \"MRIM_CS_OFFLINE_MESSAGE_ACK\" packet: %d, %04x %v\n", p.Seq, p.Msg, p.Data)
+
 	}
 }
 
@@ -91,13 +117,18 @@ func spamChat(ctx context.Context, c *mrim.Client, to string) {
 func sendMsg(ctx context.Context, c *mrim.Client, to, msg string) error {
 	msgRTF := []byte{' '}
 
+	m, _, err := transform.Bytes(charmap.Windows1251.NewEncoder(), []byte(msg))
+	if err != nil {
+		return err
+	}
+
 	var p mrim.PacketWriter
 	p.WriteData(mrim.MessageFlagNorecv) // flags
 	p.WriteData(to)                     // to
-	p.WriteData(msg)                    // message
+	p.WriteData(m)                      // message
 	p.WriteData(msgRTF)                 // rtf message
 
-	err := c.Send(ctx, p.Packet(mrim.MsgCSMessage))
+	err = c.Send(ctx, p.Packet(mrim.MsgCSMessage))
 	if err != nil {
 		log.Fatal(err)
 	}
