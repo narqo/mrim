@@ -90,13 +90,13 @@ func spamChat(ctx context.Context, c *mrim.Client, to string) {
 }
 
 func sendMsg(ctx context.Context, c *mrim.Client, to, msg string) error {
-	msgRTL := []byte{' '}
+	msgRTF := []byte{' '}
 
 	var p mrim.PacketWriter
 	p.WriteData(mrim.MessageFlagNorecv) // flags
 	p.WriteData(to)                     // to
 	p.WriteData(msg)                    // message
-	p.WriteData(msgRTL)                 // rtl message
+	p.WriteData(msgRTF)                 // rtf message
 
 	err := c.Send(ctx, p.Packet(mrim.MsgCSMessage))
 	if err != nil {
