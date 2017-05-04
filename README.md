@@ -2,6 +2,9 @@
 
 A Go client for Mail.Ru Agent aka Mail.Ru Instant Messenger (mrim).
 
+[![GoDoc](https://godoc.org/github.com/narqo/mrim?status.svg)](http://godoc.org/github.com/narqo/mrim)
+[![BCH compliance](https://bettercodehub.com/edge/badge/narqo/mrim?branch=master)](https://bettercodehub.com/)
+
 ---
 
 **The project is NOT meant to be finished. Yet. Contributions are welcome.**
